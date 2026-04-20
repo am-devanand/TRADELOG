@@ -28,12 +28,23 @@ export function renderLogin() {
       </div>
     </div>
   `;
-  document.getElementById('login-form').addEventListener('submit', (e) => {
+  document.getElementById('login-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const username = document.getElementById('login-username').value.trim();
     const password = document.getElementById('login-password').value;
     if (!username || !password) return showToast('Please fill all fields', 'error');
-    const result = loginUser(username, password);
+    
+    // Disable button while loading
+    const btn = e.target.querySelector('button[type="submit"]');
+    const originalText = btn.innerHTML;
+    btn.innerHTML = 'Signing in...';
+    btn.disabled = true;
+
+    const result = await loginUser(username, password);
+    
+    btn.innerHTML = originalText;
+    btn.disabled = false;
+
     if (result.success) {
       showToast('Welcome back, ' + username + '!');
       navigate('/home');

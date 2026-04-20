@@ -1,36 +1,66 @@
 // ============================================
-// Storage utility — all localStorage operations
+// Storage utility — localStorage + Firebase Sync
 // ============================================
+import { auth, db } from './firebase.js';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from "firebase/auth";
+import { doc, setDoc, getDoc } from "firebase/firestore";
 
-const USERS_KEY = 'tradelog_users';
 const SESSION_KEY = 'tradelog_session';
 
-function getUsers() {
-  return JSON.parse(localStorage.getItem(USERS_KEY) || '{}');
+// Helper to convert username to fake email for Firebase Auth
+const getEmail = (username) => `${username.toLowerCase()}@tradelog.app`;
+
+export async function registerUser(username, password) {
+  try {
+    await createUserWithEmailAndPassword(auth, getEmail(username), password);
+    // Initialize empty data in Firestore
+    await setDoc(doc(db, "users", username), { folders: [], trades: {}, journal: {} });
+    return { success: true };
+  } catch (error) {
+    if (error.code === 'auth/email-already-in-use') {
+      return { success: false, error: 'Username already exists' };
+    }
+    return { success: false, error: error.message.replace('Firebase: ', '') };
+  }
 }
 
-function saveUsers(users) {
-  localStorage.setItem(USERS_KEY, JSON.stringify(users));
-}
-
-export function registerUser(username, password) {
-  const users = getUsers();
-  if (users[username]) return { success: false, error: 'Username already exists' };
-  users[username] = { username, password: btoa(password), createdAt: new Date().toISOString() };
-  saveUsers(users);
-  return { success: true };
-}
-
-export function loginUser(username, password) {
-  const users = getUsers();
-  if (!users[username]) return { success: false, error: 'User not found' };
-  if (users[username].password !== btoa(password)) return { success: false, error: 'Wrong password' };
-  localStorage.setItem(SESSION_KEY, username);
-  return { success: true };
+export async function loginUser(username, password) {
+  try {
+    await signInWithEmailAndPassword(auth, getEmail(username), password);
+    localStorage.setItem(SESSION_KEY, username);
+    
+    // Fetch user data from Firestore and populate localStorage
+    const docSnap = await getDoc(doc(db, "users", username));
+    if (docSnap.exists()) {
+      const data = docSnap.data();
+      localStorage.setItem(`tradelog_folders_${username}`, JSON.stringify(data.folders || []));
+      
+      // Store trades
+      if (data.trades) {
+        Object.keys(data.trades).forEach(folderId => {
+          localStorage.setItem(`tradelog_trades_${folderId}`, JSON.stringify(data.trades[folderId] || []));
+        });
+      }
+      
+      // Store journal
+      if (data.journal) {
+        Object.keys(data.journal).forEach(folderId => {
+          localStorage.setItem(`tradelog_journal_${folderId}`, JSON.stringify(data.journal[folderId] || []));
+        });
+      }
+    }
+    return { success: true };
+  } catch (error) {
+    if (error.code === 'auth/invalid-credential') {
+      return { success: false, error: 'User not found or Wrong password' };
+    }
+    return { success: false, error: error.message.replace('Firebase: ', '') };
+  }
 }
 
 export function logoutUser() {
   localStorage.removeItem(SESSION_KEY);
+  signOut(auth);
 }
 
 export function getCurrentUser() {
@@ -39,6 +69,34 @@ export function getCurrentUser() {
 
 export function isLoggedIn() {
   return !!getCurrentUser();
+}
+
+// ---- Background Sync to Firestore ----
+let syncTimeout = null;
+function syncToFirebase() {
+  const user = getCurrentUser();
+  if (!user) return;
+  
+  // Debounce to avoid too many writes
+  if (syncTimeout) clearTimeout(syncTimeout);
+  syncTimeout = setTimeout(async () => {
+    try {
+      const data = {
+        folders: JSON.parse(localStorage.getItem(`tradelog_folders_${user}`) || '[]'),
+        trades: {},
+        journal: {}
+      };
+      
+      data.folders.forEach(f => {
+        data.trades[f.id] = JSON.parse(localStorage.getItem(`tradelog_trades_${f.id}`) || '[]');
+        data.journal[f.id] = JSON.parse(localStorage.getItem(`tradelog_journal_${f.id}`) || '[]');
+      });
+      
+      await setDoc(doc(db, "users", user), data);
+    } catch (e) {
+      console.error("Failed to sync to Firebase:", e);
+    }
+  }, 1000);
 }
 
 // ---- Folder Operations ----
@@ -52,12 +110,14 @@ export function saveFolder(user, folder) {
   const folders = getFolders(user);
   folders.push(folder);
   localStorage.setItem(foldersKey(user), JSON.stringify(folders));
+  syncToFirebase();
 }
 
 export function updateFolder(user, folderId, updates) {
   let folders = getFolders(user);
   folders = folders.map(f => f.id === folderId ? { ...f, ...updates } : f);
   localStorage.setItem(foldersKey(user), JSON.stringify(folders));
+  syncToFirebase();
 }
 
 export function deleteFolder(user, folderId) {
@@ -66,6 +126,7 @@ export function deleteFolder(user, folderId) {
   localStorage.setItem(foldersKey(user), JSON.stringify(folders));
   localStorage.removeItem(`tradelog_trades_${folderId}`);
   localStorage.removeItem(`tradelog_journal_${folderId}`);
+  syncToFirebase();
 }
 
 export function getFolder(user, folderId) {
@@ -83,18 +144,21 @@ export function saveTrade(folderId, trade) {
   const trades = getTrades(folderId);
   trades.push(trade);
   localStorage.setItem(tradesKey(folderId), JSON.stringify(trades));
+  syncToFirebase();
 }
 
 export function updateTrade(folderId, tradeId, updates) {
   let trades = getTrades(folderId);
   trades = trades.map(t => t.id === tradeId ? { ...t, ...updates } : t);
   localStorage.setItem(tradesKey(folderId), JSON.stringify(trades));
+  syncToFirebase();
 }
 
 export function deleteTrade(folderId, tradeId) {
   let trades = getTrades(folderId);
   trades = trades.filter(t => t.id !== tradeId);
   localStorage.setItem(tradesKey(folderId), JSON.stringify(trades));
+  syncToFirebase();
 }
 
 export function recalculateBalances(user, folderId) {
@@ -110,6 +174,7 @@ export function recalculateBalances(user, folderId) {
   });
   localStorage.setItem(tradesKey(folderId), JSON.stringify(trades));
   updateFolder(user, folderId, { currentBalance: Math.round(balance * 100) / 100 });
+  syncToFirebase();
   return balance;
 }
 
@@ -124,12 +189,14 @@ export function saveJournalEntry(folderId, entry) {
   const entries = getJournalEntries(folderId);
   entries.push(entry);
   localStorage.setItem(journalKey(folderId), JSON.stringify(entries));
+  syncToFirebase();
 }
 
 export function deleteJournalEntry(folderId, entryId) {
   let entries = getJournalEntries(folderId);
   entries = entries.filter(e => e.id !== entryId);
   localStorage.setItem(journalKey(folderId), JSON.stringify(entries));
+  syncToFirebase();
 }
 
 // ---- Theme ----

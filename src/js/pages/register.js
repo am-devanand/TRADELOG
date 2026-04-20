@@ -32,7 +32,7 @@ export function renderRegister() {
       </div>
     </div>
   `;
-  document.getElementById('register-form').addEventListener('submit', (e) => {
+  document.getElementById('register-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const username = document.getElementById('reg-username').value.trim();
     const password = document.getElementById('reg-password').value;
@@ -40,7 +40,18 @@ export function renderRegister() {
     if (!username || !password) return showToast('Please fill all fields', 'error');
     if (password !== confirm) return showToast('Passwords do not match', 'error');
     if (password.length < 4) return showToast('Password must be at least 4 characters', 'error');
-    const result = registerUser(username, password);
+    
+    // Disable button while loading
+    const btn = e.target.querySelector('button[type="submit"]');
+    const originalText = btn.innerHTML;
+    btn.innerHTML = 'Creating...';
+    btn.disabled = true;
+
+    const result = await registerUser(username, password);
+
+    btn.innerHTML = originalText;
+    btn.disabled = false;
+
     if (result.success) {
       showToast('Account created! Please sign in.');
       navigate('/login');
