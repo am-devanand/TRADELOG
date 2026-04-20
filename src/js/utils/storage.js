@@ -10,15 +10,30 @@ const SESSION_KEY = 'tradelog_session';
 // Helper to convert username to fake email for Firebase Auth
 const getEmail = (username) => `${username.toLowerCase()}@tradelog.app`;
 
+// Helper to add timeout to promises
+const withTimeout = (promise, ms, errorMessage = 'Operation timed out') => {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(errorMessage)), ms))
+  ]);
+};
+
 export async function registerUser(username, password) {
   try {
     await createUserWithEmailAndPassword(auth, getEmail(username), password);
-    // Initialize empty data in Firestore
-    await setDoc(doc(db, "users", username), { folders: [], trades: {}, journal: {} });
+    // Initialize empty data in Firestore with a 5 second timeout
+    await withTimeout(
+      setDoc(doc(db, "users", username), { folders: [], trades: {}, journal: {} }),
+      5000,
+      'Could not connect to database. Did you create the Firestore Database in your Firebase Console?'
+    );
     return { success: true };
   } catch (error) {
     if (error.code === 'auth/email-already-in-use') {
       return { success: false, error: 'Username already exists' };
+    }
+    if (error.code === 'auth/operation-not-allowed') {
+      return { success: false, error: 'Please enable Email/Password auth in Firebase Console' };
     }
     return { success: false, error: error.message.replace('Firebase: ', '') };
   }
@@ -29,8 +44,13 @@ export async function loginUser(username, password) {
     await signInWithEmailAndPassword(auth, getEmail(username), password);
     localStorage.setItem(SESSION_KEY, username);
     
-    // Fetch user data from Firestore and populate localStorage
-    const docSnap = await getDoc(doc(db, "users", username));
+    // Fetch user data from Firestore with a 5 second timeout
+    const docSnap = await withTimeout(
+      getDoc(doc(db, "users", username)),
+      5000,
+      'Could not load data. Did you create the Firestore Database in your Firebase Console?'
+    );
+    
     if (docSnap.exists()) {
       const data = docSnap.data();
       localStorage.setItem(`tradelog_folders_${username}`, JSON.stringify(data.folders || []));
@@ -53,6 +73,9 @@ export async function loginUser(username, password) {
   } catch (error) {
     if (error.code === 'auth/invalid-credential') {
       return { success: false, error: 'User not found or Wrong password' };
+    }
+    if (error.code === 'auth/operation-not-allowed') {
+      return { success: false, error: 'Please enable Email/Password auth in Firebase Console' };
     }
     return { success: false, error: error.message.replace('Firebase: ', '') };
   }
