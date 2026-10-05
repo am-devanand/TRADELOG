@@ -14,7 +14,11 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
-const analytics = getAnalytics(app);
+try {
+  getAnalytics(app);
+} catch {
+  // analytics unavailable (SSR, adblock, unsupported) - app works without it
+}
 
 export const auth = getAuth(app);
 export const db = getFirestore(app);

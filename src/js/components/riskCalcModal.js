@@ -4,7 +4,7 @@ export function showRiskCalcModal() {
   showModal(`
     <div class="modal-header">
       <h3 class="modal-title">🧮 Risk Calculator</h3>
-      <button class="modal-close" onclick="document.getElementById('modal-overlay').classList.remove('active')">×</button>
+      <button class="modal-close" id="risk-close-btn">×</button>
     </div>
     <div class="risk-calc" style="max-width:100%;border:none;padding:0;">
       <div class="form-group">
@@ -20,6 +20,7 @@ export function showRiskCalcModal() {
     </div>
   `);
   setTimeout(() => {
+    document.getElementById('risk-close-btn')?.addEventListener('click', hideModal);
     const calc = () => {
       const bal = parseFloat(document.getElementById('rc-balance')?.value || 0);
       const risk = parseFloat(document.getElementById('rc-risk')?.value || 0);

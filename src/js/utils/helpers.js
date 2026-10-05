@@ -21,9 +21,10 @@ export function showModal(content) {
   const overlay = document.getElementById('modal-overlay');
   overlay.innerHTML = `<div class="modal">${content}</div>`;
   overlay.classList.add('active');
-  overlay.addEventListener('click', (e) => {
+  // Use onclick (not addEventListener) so repeated showModal calls don't stack listeners
+  overlay.onclick = (e) => {
     if (e.target === overlay) hideModal();
-  });
+  };
 }
 
 export function hideModal() {
@@ -109,16 +110,24 @@ export function generateId() {
 export function formatCurrency(amount, currency = 'USD') {
   const symbols = { USD: '$', EUR: '€', GBP: '£', JPY: '¥', INR: '₹' };
   const sym = symbols[currency] || '$';
-  return `${sym}${Math.abs(amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const num = Number(amount);
+  const safe = Number.isFinite(num) ? num : 0;
+  return `${safe < 0 ? '-' : ''}${sym}${Math.abs(safe).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+export function escapeHtml(str) {
+  return String(str ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
 export function formatDate(dateStr) {
   const d = new Date(dateStr);
+  if (Number.isNaN(d.getTime())) return '—';
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 export function formatDateShort(dateStr) {
   const d = new Date(dateStr);
+  if (Number.isNaN(d.getTime())) return '—';
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
@@ -126,7 +135,7 @@ export function getWeekStart() {
   const now = new Date();
   const day = now.getDay();
   const diff = now.getDate() - day + (day === 0 ? -6 : 1);
-  const monday = new Date(now.setDate(diff));
+  const monday = new Date(now.getFullYear(), now.getMonth(), diff);
   monday.setHours(0, 0, 0, 0);
   return monday;
 }

@@ -1,5 +1,5 @@
 import { getCurrentUser, getFolder, getTrades, saveTrade, updateTrade, deleteTrade, recalculateBalances } from '../utils/storage.js';
-import { navigate, showModal, hideModal, showToast, showConfirm, generateId, formatCurrency, formatDate, getWeekStart } from '../utils/helpers.js';
+import { navigate, showModal, hideModal, showToast, showConfirm, generateId, formatCurrency, formatDate, escapeHtml, getWeekStart } from '../utils/helpers.js';
 import { renderNavbar, bindNavbar } from '../components/navbar.js';
 import Papa from 'papaparse';
 
@@ -9,7 +9,7 @@ const STRATEGIES = ['Breakout','Reversal','Scalp','Trend Following','Range','New
 
 function getStreak(trades) {
   if (!trades.length) return { type: null, count: 0 };
-  const sorted = [...trades].sort((a,b) => new Date(b.date) - new Date(b.date) || new Date(b.createdAt) - new Date(a.createdAt));
+  const sorted = [...trades].sort((a,b) => new Date(b.date) - new Date(a.date) || new Date(b.createdAt) - new Date(a.createdAt));
   const lastType = sorted[0].type;
   let count = 0;
   for (const t of sorted) { if (t.type === lastType) count++; else break; }
@@ -41,7 +41,7 @@ export function renderDashboard(params) {
       <div class="page-header">
         <div>
           <button class="btn btn-ghost btn-sm" id="back-home" style="margin-bottom:8px;">← Back</button>
-          <h1 class="page-title">${folder.name}</h1>
+          <h1 class="page-title">${escapeHtml(folder.name)}</h1>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <button class="btn btn-secondary btn-sm" id="import-csv-btn">📤 Import CSV</button>
@@ -166,13 +166,13 @@ function renderTradesTab(trades, folder) {
           ${trades.map(t => `
             <tr>
               <td>${formatDate(t.date)}</td>
-              <td style="font-weight:600">${t.pair}</td>
+              <td style="font-weight:600">${escapeHtml(t.pair)}</td>
               <td><span class="badge ${t.type === 'TP' ? 'badge-tp' : 'badge-sl'}">${t.type}</span></td>
-              <td class="${t.type === 'TP' ? 'positive' : 'negative'}" style="font-weight:600">${t.type === 'TP' ? '+' : '-'}${formatCurrency(t.amount, cur)}</td>
+              <td class="${t.type === 'TP' ? 'positive' : 'negative'}" style="font-weight:600">${t.type === 'TP' ? '+' : '-'}${formatCurrency(Math.abs(t.amount), cur)}</td>
               <td>${formatCurrency(t.balanceAfter || 0, cur)}</td>
-              <td style="color:var(--text-secondary);font-size:var(--font-size-xs)">${t.session || '—'}</td>
-              <td style="color:var(--text-secondary);font-size:var(--font-size-xs)">${t.strategy || '—'}</td>
-              <td style="color:var(--text-secondary);font-size:var(--font-size-xs);max-width:120px;overflow:hidden;text-overflow:ellipsis">${t.notes || '—'}</td>
+              <td style="color:var(--text-secondary);font-size:var(--font-size-xs)">${escapeHtml(t.session || '—')}</td>
+              <td style="color:var(--text-secondary);font-size:var(--font-size-xs)">${escapeHtml(t.strategy || '—')}</td>
+              <td style="color:var(--text-secondary);font-size:var(--font-size-xs);max-width:120px;overflow:hidden;text-overflow:ellipsis">${escapeHtml(t.notes || '—')}</td>
               <td>
                 <div style="display:flex;gap:4px;">
                   <button class="btn btn-ghost btn-sm edit-trade" data-id="${t.id}" title="Edit">✏️</button>
@@ -217,7 +217,7 @@ function tradeFormHtml(trade = null) {
       </div>
       <div class="form-group">
         <label class="form-label">Currency Pair</label>
-        <input list="pairs-list" id="trade-pair" value="${trade?.pair || ''}" placeholder="Select or type" required>
+        <input list="pairs-list" id="trade-pair" value="${escapeHtml(trade?.pair || '')}" placeholder="Select or type" required>
         <datalist id="pairs-list">${PAIRS.map(p => `<option value="${p}">`).join('')}</datalist>
       </div>
     </div>
@@ -248,13 +248,13 @@ function tradeFormHtml(trade = null) {
       </div>
       <div class="form-group">
         <label class="form-label">Strategy (optional)</label>
-        <input list="strat-list" id="trade-strategy" value="${trade?.strategy || ''}" placeholder="Select or type">
+        <input list="strat-list" id="trade-strategy" value="${escapeHtml(trade?.strategy || '')}" placeholder="Select or type">
         <datalist id="strat-list">${STRATEGIES.map(s => `<option value="${s}">`).join('')}</datalist>
       </div>
     </div>
     <div class="form-group">
       <label class="form-label">Notes (optional)</label>
-      <textarea id="trade-notes" rows="2" placeholder="What did you observe?">${trade?.notes || ''}</textarea>
+      <textarea id="trade-notes" rows="2" placeholder="What did you observe?">${escapeHtml(trade?.notes || '')}</textarea>
     </div>`;
 }
 

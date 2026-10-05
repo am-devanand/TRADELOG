@@ -4,11 +4,24 @@
 import { auth, db } from './firebase.js';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from "firebase/auth";
 import { doc, setDoc, getDoc } from "firebase/firestore";
+import { mergeAuditEntries } from './auditLog.js';
 
 const SESSION_KEY = 'tradelog_session';
 
-// Helper to convert username to fake email for Firebase Auth
-const getEmail = (username) => `${username.toLowerCase()}@tradelog.app`;
+function normalizeUsername(username) {
+  return String(username || '').trim().toLowerCase();
+}
+
+function safeParse(raw, fallback) {
+  try {
+    if (raw == null) return fallback;
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+}
+
+const getEmail = (username) => `${normalizeUsername(username)}@tradelog.app`;
 
 // Helper to add timeout to promises
 const withTimeout = (promise, ms, errorMessage = 'Operation timed out') => {
@@ -19,14 +32,20 @@ const withTimeout = (promise, ms, errorMessage = 'Operation timed out') => {
 };
 
 export async function registerUser(username, password) {
+  const clean = normalizeUsername(username);
+  if (!/^[a-z0-9._-]{3,32}$/.test(clean)) {
+    return { success: false, error: 'Username must be 3-32 chars: letters, numbers, . _ -' };
+  }
   try {
-    await createUserWithEmailAndPassword(auth, getEmail(username), password);
-    // Initialize empty data in Firestore with a 5 second timeout
+    await createUserWithEmailAndPassword(auth, getEmail(clean), password);
     await withTimeout(
-      setDoc(doc(db, "users", username), { folders: [], trades: {}, journal: {} }),
+      setDoc(doc(db, "users", clean), { folders: [], trades: {}, journal: {}, rules: [], setups: [], executedTrades: [], reviews: [], screenshots: [], propConfigs: {}, improvements: [], analyticsPrefs: {}, audit: [] }),
       5000,
       'Could not connect to database. Did you create the Firestore Database in your Firebase Console?'
     );
+    if (typeof localStorage !== 'undefined' && localStorage.getItem(`tradelog_audit_${clean}`) == null) {
+      localStorage.setItem(`tradelog_audit_${clean}`, JSON.stringify([]));
+    }
     return { success: true };
   } catch (error) {
     if (error.code === 'auth/email-already-in-use') {
@@ -40,20 +59,20 @@ export async function registerUser(username, password) {
 }
 
 export async function loginUser(username, password) {
+  const clean = normalizeUsername(username);
   try {
-    await signInWithEmailAndPassword(auth, getEmail(username), password);
-    localStorage.setItem(SESSION_KEY, username);
+    await signInWithEmailAndPassword(auth, getEmail(clean), password);
+    localStorage.setItem(SESSION_KEY, clean);
     
-    // Fetch user data from Firestore with a 5 second timeout
     const docSnap = await withTimeout(
-      getDoc(doc(db, "users", username)),
+      getDoc(doc(db, "users", clean)),
       5000,
       'Could not load data. Did you create the Firestore Database in your Firebase Console?'
     );
     
     if (docSnap.exists()) {
       const data = docSnap.data();
-      localStorage.setItem(`tradelog_folders_${username}`, JSON.stringify(data.folders || []));
+      localStorage.setItem(`tradelog_folders_${clean}`, JSON.stringify(data.folders || []));
       
       // Store trades
       if (data.trades) {
@@ -67,6 +86,84 @@ export async function loginUser(username, password) {
         Object.keys(data.journal).forEach(folderId => {
           localStorage.setItem(`tradelog_journal_${folderId}`, JSON.stringify(data.journal[folderId] || []));
         });
+      }
+
+      // Store rules (canonical shape, see ruleManager.js). Users without
+      // remote rules get [] locally — no overwrite, no auto-seed.
+      if (Array.isArray(data.rules)) {
+        localStorage.setItem(`tradelog_rules_${clean}`, JSON.stringify(data.rules));
+      } else if (localStorage.getItem(`tradelog_rules_${clean}`) == null) {
+        localStorage.setItem(`tradelog_rules_${clean}`, JSON.stringify([]));
+      }
+
+      if (Array.isArray(data.setups)) {
+        localStorage.setItem(`tradelog_setups_${clean}`, JSON.stringify(data.setups));
+      } else if (localStorage.getItem(`tradelog_setups_${clean}`) == null) {
+        localStorage.setItem(`tradelog_setups_${clean}`, JSON.stringify([]));
+      }
+
+      if (Array.isArray(data.executedTrades)) {
+        localStorage.setItem(`tradelog_exectrades_${clean}`, JSON.stringify(data.executedTrades));
+      } else if (localStorage.getItem(`tradelog_exectrades_${clean}`) == null) {
+        localStorage.setItem(`tradelog_exectrades_${clean}`, JSON.stringify([]));
+      }
+
+      if (Array.isArray(data.reviews)) {
+        localStorage.setItem(`tradelog_reviews_${clean}`, JSON.stringify(data.reviews));
+      } else if (localStorage.getItem(`tradelog_reviews_${clean}`) == null) {
+        localStorage.setItem(`tradelog_reviews_${clean}`, JSON.stringify([]));
+      }
+
+      // Screenshot metadata mirror: ID-only refs (blobs stay in IndexedDB).
+      if (Array.isArray(data.screenshots)) {
+        const shaped = data.screenshots
+          .filter((m) => m && typeof m === 'object' && m.id)
+          .map((m) => ({
+            id: String(m.id),
+            tradeId: m.tradeId ? String(m.tradeId) : '',
+            setupId: m.setupId ? String(m.setupId) : '',
+            reviewId: m.reviewId ? String(m.reviewId) : '',
+            type: String(m.type || 'OTHER'),
+            filename: String(m.filename || 'screenshot'),
+            mimeType: String(m.mimeType || 'image/png'),
+            size: Number.isFinite(Number(m.size)) ? Number(m.size) : 0,
+            createdAt: m.createdAt || new Date().toISOString(),
+          }));
+        localStorage.setItem(`tradelog_screenshots_${clean}`, JSON.stringify(shaped));
+      } else if (localStorage.getItem(`tradelog_screenshots_${clean}`) == null) {
+        localStorage.setItem(`tradelog_screenshots_${clean}`, JSON.stringify([]));
+      }
+
+      if (data.propConfigs && typeof data.propConfigs === 'object' && !Array.isArray(data.propConfigs)) {
+        localStorage.setItem(`tradelog_propconfig_${clean}`, JSON.stringify(data.propConfigs));
+      } else if (localStorage.getItem(`tradelog_propconfig_${clean}`) == null) {
+        localStorage.setItem(`tradelog_propconfig_${clean}`, JSON.stringify({}));
+      }
+
+      if (Array.isArray(data.improvements)) {
+        localStorage.setItem(`tradelog_improvements_${clean}`, JSON.stringify(data.improvements));
+      } else if (localStorage.getItem(`tradelog_improvements_${clean}`) == null) {
+        localStorage.setItem(`tradelog_improvements_${clean}`, JSON.stringify([]));
+      }
+
+      if (data.analyticsPrefs && typeof data.analyticsPrefs === 'object' && !Array.isArray(data.analyticsPrefs)) {
+        localStorage.setItem(`tradelog_analytics_prefs_${clean}`, JSON.stringify(data.analyticsPrefs));
+      } else if (localStorage.getItem(`tradelog_analytics_prefs_${clean}`) == null) {
+        localStorage.setItem(`tradelog_analytics_prefs_${clean}`, JSON.stringify({}));
+      }
+
+      // Audit log: append-only merge — never REPLACE local entries with fewer
+      // remote ones. Union by entry id, keep newest, seed [] when absent.
+      const auditKey = `tradelog_audit_${clean}`;
+      const localAudit = safeParse(localStorage.getItem(auditKey), []);
+      const localArr = Array.isArray(localAudit) ? localAudit : [];
+      if (!Array.isArray(data.audit)) {
+        if (localStorage.getItem(auditKey) == null) {
+          localStorage.setItem(auditKey, JSON.stringify([]));
+        }
+      } else {
+        const merged = mergeAuditEntries(localArr, data.audit);
+        localStorage.setItem(auditKey, JSON.stringify(merged.events));
       }
     }
     return { success: true };
@@ -105,17 +202,60 @@ function syncToFirebase() {
   syncTimeout = setTimeout(async () => {
     try {
       const data = {
-        folders: JSON.parse(localStorage.getItem(`tradelog_folders_${user}`) || '[]'),
+        folders: safeParse(localStorage.getItem(`tradelog_folders_${user}`), []),
         trades: {},
-        journal: {}
+        journal: {},
+        rules: safeParse(localStorage.getItem(`tradelog_rules_${user}`), []),
+        setups: safeParse(localStorage.getItem(`tradelog_setups_${user}`), []),
+        executedTrades: (() => {
+          const v = safeParse(localStorage.getItem(`tradelog_exectrades_${user}`), []);
+          return Array.isArray(v) ? v : [];
+        })(),
+        reviews: (() => {
+          const v = safeParse(localStorage.getItem(`tradelog_reviews_${user}`), []);
+          return Array.isArray(v) ? v : [];
+        })(),
+        screenshots: (() => {
+          const v = safeParse(localStorage.getItem(`tradelog_screenshots_${user}`), []);
+          if (!Array.isArray(v)) return [];
+          return v
+            .filter((m) => m && typeof m === 'object' && m.id)
+            .map((m) => ({
+              id: String(m.id),
+              tradeId: m.tradeId ? String(m.tradeId) : '',
+              setupId: m.setupId ? String(m.setupId) : '',
+              reviewId: m.reviewId ? String(m.reviewId) : '',
+              type: String(m.type || 'OTHER'),
+              filename: String(m.filename || 'screenshot'),
+              mimeType: String(m.mimeType || 'image/png'),
+              size: Number.isFinite(Number(m.size)) ? Number(m.size) : 0,
+              createdAt: m.createdAt || new Date().toISOString(),
+            }));
+        })(),
+        propConfigs: (() => {
+          const v = safeParse(localStorage.getItem(`tradelog_propconfig_${user}`), {});
+          return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+        })(),
+        improvements: (() => {
+          const v = safeParse(localStorage.getItem(`tradelog_improvements_${user}`), []);
+          return Array.isArray(v) ? v : [];
+        })(),
+        analyticsPrefs: (() => {
+          const v = safeParse(localStorage.getItem(`tradelog_analytics_prefs_${user}`), {});
+          return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+        })(),
+        audit: (() => {
+          const v = safeParse(localStorage.getItem(`tradelog_audit_${user}`), []);
+          return Array.isArray(v) ? v : [];
+        })()
       };
       
       data.folders.forEach(f => {
-        data.trades[f.id] = JSON.parse(localStorage.getItem(`tradelog_trades_${f.id}`) || '[]');
-        data.journal[f.id] = JSON.parse(localStorage.getItem(`tradelog_journal_${f.id}`) || '[]');
+        data.trades[f.id] = safeParse(localStorage.getItem(`tradelog_trades_${f.id}`), []);
+        data.journal[f.id] = safeParse(localStorage.getItem(`tradelog_journal_${f.id}`), []);
       });
       
-      await setDoc(doc(db, "users", user), data);
+      await setDoc(doc(db, "users", user), data, { merge: true });
     } catch (e) {
       console.error("Failed to sync to Firebase:", e);
     }
@@ -126,7 +266,7 @@ function syncToFirebase() {
 function foldersKey(user) { return `tradelog_folders_${user}`; }
 
 export function getFolders(user) {
-  return JSON.parse(localStorage.getItem(foldersKey(user)) || '[]');
+  return safeParse(localStorage.getItem(foldersKey(user)), []);
 }
 
 export function saveFolder(user, folder) {
@@ -160,7 +300,7 @@ export function getFolder(user, folderId) {
 function tradesKey(folderId) { return `tradelog_trades_${folderId}`; }
 
 export function getTrades(folderId) {
-  return JSON.parse(localStorage.getItem(tradesKey(folderId)) || '[]');
+  return safeParse(localStorage.getItem(tradesKey(folderId)), []);
 }
 
 export function saveTrade(folderId, trade) {
@@ -205,7 +345,7 @@ export function recalculateBalances(user, folderId) {
 function journalKey(folderId) { return `tradelog_journal_${folderId}`; }
 
 export function getJournalEntries(folderId) {
-  return JSON.parse(localStorage.getItem(journalKey(folderId)) || '[]');
+  return safeParse(localStorage.getItem(journalKey(folderId)), []);
 }
 
 export function saveJournalEntry(folderId, entry) {

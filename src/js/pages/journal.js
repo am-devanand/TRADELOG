@@ -1,5 +1,5 @@
 import { getCurrentUser, getFolder, getJournalEntries, saveJournalEntry, deleteJournalEntry } from '../utils/storage.js';
-import { navigate, showToast, showConfirm, generateId, formatDate } from '../utils/helpers.js';
+import { navigate, showToast, showConfirm, generateId, formatDate, escapeHtml } from '../utils/helpers.js';
 import { renderNavbar, bindNavbar } from '../components/navbar.js';
 
 export function renderJournal(params) {
@@ -45,7 +45,7 @@ export function renderJournal(params) {
                 <div class="journal-date">📅 ${formatDate(e.date)}</div>
                 <button class="btn btn-ghost btn-sm delete-journal" data-id="${e.id}" title="Delete">🗑</button>
               </div>
-              <div class="journal-text">${e.text}</div>
+              <div class="journal-text">${escapeHtml(e.text)}</div>
             </div>
           `).join('')}
       </div>

@@ -1,5 +1,5 @@
 import { getCurrentUser, getFolders, saveFolder, deleteFolder, updateFolder, getTrades } from '../utils/storage.js';
-import { navigate, showModal, hideModal, showToast, showConfirm, generateId, formatCurrency, isMonday } from '../utils/helpers.js';
+import { navigate, showModal, hideModal, showToast, showConfirm, generateId, formatCurrency, escapeHtml, isMonday } from '../utils/helpers.js';
 import { renderNavbar, bindNavbar } from '../components/navbar.js';
 
 function getWeeklyBanner(user) {
@@ -60,8 +60,8 @@ export function renderHome() {
           return `
           <div class="folder-card ${f.pinned ? 'pinned' : ''}" data-id="${f.id}">
             <div class="folder-name">
-              ${f.pinned ? '📌 ' : ''}${f.name}
-              <span class="badge badge-gold" style="margin-left:auto;font-size:10px;">${f.currency || 'USD'}</span>
+              ${f.pinned ? '📌 ' : ''}${escapeHtml(f.name)}
+              <span class="badge badge-gold" style="margin-left:auto;font-size:10px;">${escapeHtml(f.currency || 'USD')}</span>
             </div>
             <div class="folder-balance ${pnlClass}">${currSym}${f.currentBalance.toLocaleString('en-US',{minimumFractionDigits:2})}</div>
             <div style="font-size:var(--font-size-xs);color:var(--text-muted);">

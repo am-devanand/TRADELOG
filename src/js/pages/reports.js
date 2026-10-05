@@ -1,8 +1,8 @@
 import { getCurrentUser, getFolder, getTrades } from '../utils/storage.js';
 import { navigate, formatCurrency, formatDate } from '../utils/helpers.js';
 import { renderNavbar, bindNavbar } from '../components/navbar.js';
-import jsPDF from 'jspdf';
-import 'jspdf-autotable';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import Papa from 'papaparse';
 
 export function renderReports(params) {
@@ -184,12 +184,22 @@ export function renderReports(params) {
     doc.setFontSize(11); doc.setTextColor(0);
     doc.text(`Trades: ${trades.length} | TP: ${tp.length} | SL: ${sl.length} | Win Rate: ${trades.length ? ((tp.length/trades.length)*100).toFixed(1) : 0}%`, 14, 38);
     doc.text(`Profit: $${totalProfit.toFixed(2)} | Loss: $${totalLoss.toFixed(2)} | Net: $${(totalProfit - totalLoss).toFixed(2)}`, 14, 45);
-    doc.autoTable({
-      startY: 52,
-      head: [['Date', 'Pair', 'Result', 'Amount', 'Balance', 'Session', 'Strategy']],
-      body: trades.map(t => [t.date, t.pair, t.type, `$${t.amount.toFixed(2)}`, `$${(t.balanceAfter||0).toFixed(2)}`, t.session||'', t.strategy||'']),
-      styles: { fontSize: 8 }, headStyles: { fillColor: [212, 160, 23] }
-    });
+    const tableBody = trades.map(t => [t.date, t.pair, t.type, `$${Number(t.amount || 0).toFixed(2)}`, `$${Number(t.balanceAfter || 0).toFixed(2)}`, t.session || '', t.strategy || '']);
+    if (typeof doc.autoTable === 'function') {
+      doc.autoTable({
+        startY: 52,
+        head: [['Date', 'Pair', 'Result', 'Amount', 'Balance', 'Session', 'Strategy']],
+        body: tableBody,
+        styles: { fontSize: 8 }, headStyles: { fillColor: [212, 160, 23] }
+      });
+    } else {
+      autoTable(doc, {
+        startY: 52,
+        head: [['Date', 'Pair', 'Result', 'Amount', 'Balance', 'Session', 'Strategy']],
+        body: tableBody,
+        styles: { fontSize: 8 }, headStyles: { fillColor: [212, 160, 23] }
+      });
+    }
     doc.save(`${folder.name}_report.pdf`);
   });
 }
