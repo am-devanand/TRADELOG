@@ -1,0 +1,172 @@
+/* ============================================
+   TRADELOG — Phase 8 pages (command center, settings, integrity)
+   Reuses existing tokens only (base.css / phase8.css language).
+   No new animation language, no neon redesign.
+   Touch targets >= 44px. Works at 320px. Safe-area support.
+   ============================================ */
+
+/* ---- Command center grid (desktop) ---- */
+.cc-page .cc-grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: var(--space-md);
+}
+
+.cc-page [data-cc="prop"] {
+  grid-column: span 12;
+}
+
+.cc-page [data-cc="balance"],
+.cc-page [data-cc="today"],
+.cc-page [data-cc="process"] {
+  grid-column: span 4;
+}
+
+.cc-page [data-cc="active"] {
+  grid-column: span 12;
+}
+
+.cc-page [data-cc="ready"],
+.cc-page [data-cc="waiting"] {
+  grid-column: span 6;
+}
+
+.cc-page [data-cc="review"],
+.cc-page [data-cc="lock"],
+.cc-page [data-cc="summary"] {
+  grid-column: span 12;
+}
+
+.cc-locked-strip {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: var(--space-md);
+  border-color: var(--color-sl-border);
+}
+
+.cc-kpi .stat-value {
+  overflow-wrap: anywhere;
+}
+
+.cc-rows {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--space-sm);
+  margin-top: 8px;
+}
+
+.cc-row {
+  margin: 0;
+}
+
+.cc-row-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cc-row-meta {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  margin-top: 8px;
+}
+
+.cc-row-meta strong {
+  color: var(--text-primary);
+}
+
+.cc-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: var(--space-md);
+  margin-top: 8px;
+}
+
+.cc-summary-strip {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: var(--space-md);
+}
+
+/* ---- Settings layout ---- */
+.settings-page .settings-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-lg);
+  max-width: 960px;
+}
+
+.settings-page .settings-grid > section {
+  min-width: 0;
+}
+
+/* ---- Shared touch targets ---- */
+.cc-page .btn,
+.cc-page select,
+.settings-page .btn {
+  min-height: 44px;
+}
+
+.cc-page a.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cc-page .btn[disabled] {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ---- Mobile: stacked order
+   PROP, BALANCE, TODAY P/L, ACTIVE, READY, WAITING, REVIEW QUEUE ---- */
+@media (max-width: 860px) {
+  .cc-page .cc-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .cc-page .cc-grid > * {
+    grid-column: 1 / -1;
+  }
+
+  .cc-page [data-cc="prop"] { order: 1; }
+  .cc-page [data-cc="balance"] { order: 2; }
+  .cc-page [data-cc="today"] { order: 3; }
+  .cc-page [data-cc="active"] { order: 4; }
+  .cc-page [data-cc="ready"] { order: 5; }
+  .cc-page [data-cc="waiting"] { order: 6; }
+  .cc-page [data-cc="review"] { order: 7; }
+  .cc-page [data-cc="lock"] { order: 8; }
+  .cc-page [data-cc="summary"] { order: 9; }
+  .cc-page [data-cc="process"] { order: 10; }
+
+  .cc-rows {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---- Narrow screens: hold 320px without sideways scroll ---- */
+@media (max-width: 480px) {
+  .cc-page .cc-grid {
+    gap: var(--space-sm);
+  }
+
+  .cc-page .p8-actions .btn,
+  .settings-page .p8-actions .btn {
+    flex: 1 1 100%;
+    justify-content: center;
+  }
+
+  .cc-summary-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
