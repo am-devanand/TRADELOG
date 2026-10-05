@@ -1,0 +1,176 @@
+// ============================================================================
+// TradeLog — Firestore security rules
+//
+// *** AUTHORED OFFLINE. DO NOT DEPLOY WITHOUT OWNER REVIEW. ***
+// The owner must review these rules and deploy them explicitly with:
+//     firebase deploy --only firestore:rules
+// (Never run `firebase login` / `firebase deploy` on the owner's behalf.)
+//
+// BACKGROUND / DEFECT BEING FIXED:
+// The app previously wrote documents at `users/{username}` (a display name)
+// while the rules keyed access on `request.auth.uid`. Result: every read AND
+// write returned 403 and cloud sync never worked. The app is being migrated
+// to UID-keyed paths below. These rules deliberately do NOT grant access to
+// legacy `users/{username}` documents — weakening the rules to cover them
+// would re-open cross-user access. Migrate the data, don't weaken the rules.
+// ============================================================================
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // -- Authorization primitive ------------------------------------------------
+    // The ONLY signal used here is `request.auth.uid` (the Firebase Auth UID
+    // minted by the server). NEVER email, username, or any client-supplied
+    // field: those are attacker-controlled and must not confer access.
+
+    // True when the caller is authenticated at all.
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // True when the caller owns the `users/{uid}` subtree being accessed.
+    function isOwner(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    // Anti id-spoofing guard for per-id upserts.
+    // The app writes an `id` (or equivalent) field inside most documents and
+    // upserts with setDoc(..., {merge:true}). If we blindly trusted the body,
+    // a client could write a doc whose inner id points elsewhere and corrupt
+    // per-id lookups. So: WHEN the field is present it MUST equal the
+    // document id from the path; when it is absent (legitimate partial merge
+    // that only touches a subset of fields) the write is still allowed.
+    // NOTE: call this only from create/update — on delete `request.resource`
+    // is null and any access to it is an error, so deletes are authorized by
+    // ownership alone (see each match block).
+    function idMatches(fieldName, pathId) {
+      return !(fieldName in request.resource.data)
+        || request.resource.data[fieldName] == pathId;
+    }
+
+    // -- User subtree -----------------------------------------------------------
+    match /users/{uid} {
+
+      // Profile document. Ownership only; no id-field check because this is a
+      // merged aggregate document (may carry legacy fields like folders,
+      // trades, rules, ...) with no single canonical `id` field.
+      allow read, write: if isOwner(uid);
+
+      // TRAP 1 — parent rules do NOT cascade: the `allow` above covers ONLY
+      // the single profile document `users/{uid}`. Every subcollection below
+      // needs its OWN explicit match + allow, otherwise reads/writes there
+      // fall through to the default deny (secure, but the app breaks with
+      // 403s). Each match below exists for exactly this reason.
+      //
+      // TRAP 2 — sibling leak: NEVER use a recursive wildcard such as
+      // `match /users/{uid}/{doc=**}` with a bare `request.auth != null`
+      // check — that grants ANY signed-in user access to EVERY user's data,
+      // and a deeper `match /users/{otherUid}/...` elsewhere does not save
+      // you (allows are OR-ed: one permissive match anywhere opens the doc).
+      // Every rule below re-checks `isOwner(uid)` against the SAME outer
+      // `{uid}` wildcard so a token for user A can never satisfy a rule on
+      // user B's path. Cross-user read and cross-user write are both
+      // impossible: `request.auth.uid` is fixed per request, and it must
+      // equal the `{uid}` path segment on every document touched.
+
+      match /accounts/{accountId} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid) && idMatches('id', accountId);
+        allow delete: if isOwner(uid);
+
+        // TRAP 1 applied twice: this explicit nested match exists because the
+        // rule on `accounts/{accountId}` does NOT cover its `journal`
+        // subcollection. Without this block, journal reads/writes would be
+        // denied by default even for the owner.
+        // Desk-check for cross-user safety: the request path is
+        // users/{uid}/accounts/{accountId}/journal/{entryId}. The ONLY uid
+        // compared is the outer `{uid}` segment, bound from the actual
+        // document path, against the caller's token uid. User A presenting
+        // A's token for users/B/.../journal/... fails `isOwner(B)`; user A
+        // cannot smuggle B's data under A's uid either, because then the
+        // path IS A's subtree (their own data, harmless). No wildcard here
+        // can match a sibling user's documents while satisfying isOwner.
+        match /journal/{entryId} {
+          allow read: if isOwner(uid);
+          allow create, update: if isOwner(uid) && idMatches('id', entryId);
+          allow delete: if isOwner(uid);
+        }
+      }
+
+      match /trades/{tradeId} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid) && idMatches('id', tradeId);
+        allow delete: if isOwner(uid);
+      }
+
+      // Legacy (pre-Phase-4) TP/SL journal trades live one level deeper than
+      // the other entities because an account holds many of them:
+      //   users/{uid}/legacyTrades/{accountId}          -> discovery marker doc
+      //   users/{uid}/legacyTrades/{accountId}/entries/{tradeId} -> the trade
+      // The extra `entries/` collection is REQUIRED: a document can never sit
+      // directly under another document, so the shorter
+      // `legacyTrades/{accountId}/{tradeId}` shape is not addressable and
+      // would match `{tradeId}` as a COLLECTION, leaving the real entry
+      // documents unmatched and therefore default-denied.
+      match /legacyTrades/{accountId} {
+        // Marker doc, keyed by accountId and carrying that same field.
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid) && idMatches('accountId', accountId);
+        allow delete: if isOwner(uid);
+
+        // TRAP 1 again: the rule above does NOT cover `entries`. Without this
+        // explicit nested match every legacy trade read/write is denied.
+        match /entries/{tradeId} {
+          allow read: if isOwner(uid);
+          allow create, update: if isOwner(uid) && idMatches('id', tradeId);
+          allow delete: if isOwner(uid);
+        }
+      }
+
+      match /rules/{ruleId} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid) && idMatches('id', ruleId);
+        allow delete: if isOwner(uid);
+      }
+
+      match /setups/{setupId} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid) && idMatches('id', setupId);
+        allow delete: if isOwner(uid);
+      }
+
+      match /reviews/{reviewId} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid) && idMatches('id', reviewId);
+        allow delete: if isOwner(uid);
+      }
+
+      // propConfigs docs are keyed by accountId and carry an `accountId`
+      // field (not an `id` field), so the spoof check binds `accountId`.
+      match /propConfigs/{accountId} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid) && idMatches('accountId', accountId);
+        allow delete: if isOwner(uid);
+      }
+
+      match /improvements/{improvementId} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid) && idMatches('id', improvementId);
+        allow delete: if isOwner(uid);
+      }
+
+      match /audit/{entryId} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid) && idMatches('id', entryId);
+        allow delete: if isOwner(uid);
+      }
+    }
+
+    // Default deny: any path not matched above (including a root-level list
+    // of /users, or any legacy `users/{username}` document whose {uid}
+    // segment is not the caller's UID) reaches NO allow rule and is DENIED.
+    // There is intentionally no catch-all `allow read, write` anywhere.
+  }
+}

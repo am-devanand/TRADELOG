@@ -1,0 +1,5 @@
+{
+  "_comment": "No composite indexes required. The app reads/writes single documents by ID (getDoc/setDoc on users/{uid} and per-id subcollection docs) and filters/sorts client-side, so Firestore's automatic single-field indexes are sufficient. Add entries here ONLY if a future server-side where()+orderBy() combination returns a 'requires an index' error.",
+  "indexes": [],
+  "fieldOverrides": []
+}

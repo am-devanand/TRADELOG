@@ -1,10 +1,13 @@
 // ============================================
 // Storage utility — localStorage + Firebase Sync
 // ============================================
-import { auth, db } from './firebase.js';
+// Local-first: every write below commits to localStorage first, then
+// schedules a debounced UID-keyed push via syncManager.js. A failed push
+// never blocks or rolls back the local write — sync state is observable
+// via getSyncState() instead of a console.error swallow.
+import { auth } from './firebase.js';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from "firebase/auth";
-import { doc, setDoc, getDoc } from "firebase/firestore";
-import { mergeAuditEntries } from './auditLog.js';
+import { initSyncManager, pushAll, pullAll, reconcile, schedulePush, handleSignedOut } from './syncManager.js';
 
 const SESSION_KEY = 'tradelog_session';
 
@@ -38,13 +41,20 @@ export async function registerUser(username, password) {
   }
   try {
     await createUserWithEmailAndPassword(auth, getEmail(clean), password);
-    await withTimeout(
-      setDoc(doc(db, "users", clean), { folders: [], trades: {}, journal: {}, rules: [], setups: [], executedTrades: [], reviews: [], screenshots: [], propConfigs: {}, improvements: [], analyticsPrefs: {}, audit: [] }),
-      5000,
-      'Could not connect to database. Did you create the Firestore Database in your Firebase Console?'
-    );
     if (typeof localStorage !== 'undefined' && localStorage.getItem(`tradelog_audit_${clean}`) == null) {
       localStorage.setItem(`tradelog_audit_${clean}`, JSON.stringify([]));
+    }
+    // Best-effort profile creation under users/{uid}. A sync failure never
+    // fails registration — local-first, the next push retries.
+    try {
+      await initSyncManager(clean);
+      await withTimeout(
+        pushAll(clean),
+        5000,
+        'Could not connect to database. Did you create the Firestore Database in your Firebase Console?'
+      );
+    } catch {
+      // observable via getSyncState(); registration still succeeds
     }
     return { success: true };
   } catch (error) {
@@ -63,108 +73,25 @@ export async function loginUser(username, password) {
   try {
     await signInWithEmailAndPassword(auth, getEmail(clean), password);
     localStorage.setItem(SESSION_KEY, clean);
-    
-    const docSnap = await withTimeout(
-      getDoc(doc(db, "users", clean)),
-      5000,
-      'Could not load data. Did you create the Firestore Database in your Firebase Console?'
-    );
-    
-    if (docSnap.exists()) {
-      const data = docSnap.data();
-      localStorage.setItem(`tradelog_folders_${clean}`, JSON.stringify(data.folders || []));
-      
-      // Store trades
-      if (data.trades) {
-        Object.keys(data.trades).forEach(folderId => {
-          localStorage.setItem(`tradelog_trades_${folderId}`, JSON.stringify(data.trades[folderId] || []));
-        });
-      }
-      
-      // Store journal
-      if (data.journal) {
-        Object.keys(data.journal).forEach(folderId => {
-          localStorage.setItem(`tradelog_journal_${folderId}`, JSON.stringify(data.journal[folderId] || []));
-        });
-      }
 
-      // Store rules (canonical shape, see ruleManager.js). Users without
-      // remote rules get [] locally — no overwrite, no auto-seed.
-      if (Array.isArray(data.rules)) {
-        localStorage.setItem(`tradelog_rules_${clean}`, JSON.stringify(data.rules));
-      } else if (localStorage.getItem(`tradelog_rules_${clean}`) == null) {
-        localStorage.setItem(`tradelog_rules_${clean}`, JSON.stringify([]));
-      }
-
-      if (Array.isArray(data.setups)) {
-        localStorage.setItem(`tradelog_setups_${clean}`, JSON.stringify(data.setups));
-      } else if (localStorage.getItem(`tradelog_setups_${clean}`) == null) {
-        localStorage.setItem(`tradelog_setups_${clean}`, JSON.stringify([]));
-      }
-
-      if (Array.isArray(data.executedTrades)) {
-        localStorage.setItem(`tradelog_exectrades_${clean}`, JSON.stringify(data.executedTrades));
-      } else if (localStorage.getItem(`tradelog_exectrades_${clean}`) == null) {
-        localStorage.setItem(`tradelog_exectrades_${clean}`, JSON.stringify([]));
-      }
-
-      if (Array.isArray(data.reviews)) {
-        localStorage.setItem(`tradelog_reviews_${clean}`, JSON.stringify(data.reviews));
-      } else if (localStorage.getItem(`tradelog_reviews_${clean}`) == null) {
-        localStorage.setItem(`tradelog_reviews_${clean}`, JSON.stringify([]));
-      }
-
-      // Screenshot metadata mirror: ID-only refs (blobs stay in IndexedDB).
-      if (Array.isArray(data.screenshots)) {
-        const shaped = data.screenshots
-          .filter((m) => m && typeof m === 'object' && m.id)
-          .map((m) => ({
-            id: String(m.id),
-            tradeId: m.tradeId ? String(m.tradeId) : '',
-            setupId: m.setupId ? String(m.setupId) : '',
-            reviewId: m.reviewId ? String(m.reviewId) : '',
-            type: String(m.type || 'OTHER'),
-            filename: String(m.filename || 'screenshot'),
-            mimeType: String(m.mimeType || 'image/png'),
-            size: Number.isFinite(Number(m.size)) ? Number(m.size) : 0,
-            createdAt: m.createdAt || new Date().toISOString(),
-          }));
-        localStorage.setItem(`tradelog_screenshots_${clean}`, JSON.stringify(shaped));
-      } else if (localStorage.getItem(`tradelog_screenshots_${clean}`) == null) {
-        localStorage.setItem(`tradelog_screenshots_${clean}`, JSON.stringify([]));
-      }
-
-      if (data.propConfigs && typeof data.propConfigs === 'object' && !Array.isArray(data.propConfigs)) {
-        localStorage.setItem(`tradelog_propconfig_${clean}`, JSON.stringify(data.propConfigs));
-      } else if (localStorage.getItem(`tradelog_propconfig_${clean}`) == null) {
-        localStorage.setItem(`tradelog_propconfig_${clean}`, JSON.stringify({}));
-      }
-
-      if (Array.isArray(data.improvements)) {
-        localStorage.setItem(`tradelog_improvements_${clean}`, JSON.stringify(data.improvements));
-      } else if (localStorage.getItem(`tradelog_improvements_${clean}`) == null) {
-        localStorage.setItem(`tradelog_improvements_${clean}`, JSON.stringify([]));
-      }
-
-      if (data.analyticsPrefs && typeof data.analyticsPrefs === 'object' && !Array.isArray(data.analyticsPrefs)) {
-        localStorage.setItem(`tradelog_analytics_prefs_${clean}`, JSON.stringify(data.analyticsPrefs));
-      } else if (localStorage.getItem(`tradelog_analytics_prefs_${clean}`) == null) {
-        localStorage.setItem(`tradelog_analytics_prefs_${clean}`, JSON.stringify({}));
-      }
-
-      // Audit log: append-only merge — never REPLACE local entries with fewer
-      // remote ones. Union by entry id, keep newest, seed [] when absent.
-      const auditKey = `tradelog_audit_${clean}`;
-      const localAudit = safeParse(localStorage.getItem(auditKey), []);
-      const localArr = Array.isArray(localAudit) ? localAudit : [];
-      if (!Array.isArray(data.audit)) {
-        if (localStorage.getItem(auditKey) == null) {
-          localStorage.setItem(auditKey, JSON.stringify([]));
-        }
-      } else {
-        const merged = mergeAuditEntries(localArr, data.audit);
-        localStorage.setItem(auditKey, JSON.stringify(merged.events));
-      }
+    // Hydrate from UID-keyed collections via additive merge (local data is
+    // never deleted), then upload any local-only records so a first login
+    // on a fresh remote migrates local data up. Both are best-effort:
+    // login succeeds regardless; failures surface via getSyncState().
+    try {
+      await initSyncManager(clean);
+      await withTimeout(
+        pullAll(clean),
+        8000,
+        'Could not load data. Did you create the Firestore Database in your Firebase Console?'
+      );
+      await withTimeout(
+        reconcile(clean),
+        8000,
+        'Could not load data. Did you create the Firestore Database in your Firebase Console?'
+      );
+    } catch {
+      // offline-first: local data intact, background retry via retryNow()
     }
     return { success: true };
   } catch (error) {
@@ -180,6 +107,11 @@ export async function loginUser(username, password) {
 
 export function logoutUser() {
   localStorage.removeItem(SESSION_KEY);
+  try {
+    handleSignedOut();
+  } catch {
+    // sign-out bookkeeping never blocks logout
+  }
   signOut(auth);
 }
 
@@ -191,75 +123,15 @@ export function isLoggedIn() {
   return !!getCurrentUser();
 }
 
-// ---- Background Sync to Firestore ----
-let syncTimeout = null;
+// ---- Background Sync (debounced UID-keyed push via syncManager) ----
 function syncToFirebase() {
-  const user = getCurrentUser();
-  if (!user) return;
-  
-  // Debounce to avoid too many writes
-  if (syncTimeout) clearTimeout(syncTimeout);
-  syncTimeout = setTimeout(async () => {
-    try {
-      const data = {
-        folders: safeParse(localStorage.getItem(`tradelog_folders_${user}`), []),
-        trades: {},
-        journal: {},
-        rules: safeParse(localStorage.getItem(`tradelog_rules_${user}`), []),
-        setups: safeParse(localStorage.getItem(`tradelog_setups_${user}`), []),
-        executedTrades: (() => {
-          const v = safeParse(localStorage.getItem(`tradelog_exectrades_${user}`), []);
-          return Array.isArray(v) ? v : [];
-        })(),
-        reviews: (() => {
-          const v = safeParse(localStorage.getItem(`tradelog_reviews_${user}`), []);
-          return Array.isArray(v) ? v : [];
-        })(),
-        screenshots: (() => {
-          const v = safeParse(localStorage.getItem(`tradelog_screenshots_${user}`), []);
-          if (!Array.isArray(v)) return [];
-          return v
-            .filter((m) => m && typeof m === 'object' && m.id)
-            .map((m) => ({
-              id: String(m.id),
-              tradeId: m.tradeId ? String(m.tradeId) : '',
-              setupId: m.setupId ? String(m.setupId) : '',
-              reviewId: m.reviewId ? String(m.reviewId) : '',
-              type: String(m.type || 'OTHER'),
-              filename: String(m.filename || 'screenshot'),
-              mimeType: String(m.mimeType || 'image/png'),
-              size: Number.isFinite(Number(m.size)) ? Number(m.size) : 0,
-              createdAt: m.createdAt || new Date().toISOString(),
-            }));
-        })(),
-        propConfigs: (() => {
-          const v = safeParse(localStorage.getItem(`tradelog_propconfig_${user}`), {});
-          return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
-        })(),
-        improvements: (() => {
-          const v = safeParse(localStorage.getItem(`tradelog_improvements_${user}`), []);
-          return Array.isArray(v) ? v : [];
-        })(),
-        analyticsPrefs: (() => {
-          const v = safeParse(localStorage.getItem(`tradelog_analytics_prefs_${user}`), {});
-          return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
-        })(),
-        audit: (() => {
-          const v = safeParse(localStorage.getItem(`tradelog_audit_${user}`), []);
-          return Array.isArray(v) ? v : [];
-        })()
-      };
-      
-      data.folders.forEach(f => {
-        data.trades[f.id] = safeParse(localStorage.getItem(`tradelog_trades_${f.id}`), []);
-        data.journal[f.id] = safeParse(localStorage.getItem(`tradelog_journal_${f.id}`), []);
-      });
-      
-      await setDoc(doc(db, "users", user), data, { merge: true });
-    } catch (e) {
-      console.error("Failed to sync to Firebase:", e);
-    }
-  }, 1000);
+  try {
+    const user = getCurrentUser();
+    if (!user) return;
+    schedulePush(user);
+  } catch {
+    // scheduling never blocks a local write
+  }
 }
 
 // ---- Folder Operations ----

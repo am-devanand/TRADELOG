@@ -8,8 +8,7 @@
 import { DEFAULT_RULE, RULE_CATEGORIES, RULE_TYPES, makeRule } from './models.js';
 import { generateId } from './helpers.js';
 import { appendAudit } from './auditLog.js';
-import { db } from './firebase.js';
-import { doc, setDoc } from 'firebase/firestore';
+import { schedulePush } from './syncManager.js';
 
 function safeAudit(user, entry) {
   try {
@@ -244,19 +243,19 @@ function currentSessionUser() {
 let rulesSyncTimer = null;
 
 /**
- * Debounced write of { rules } into users/{clean} with merge:true.
- * Never full-overwrites the user doc. Safe to call after every mutation.
+ * Debounced rules sync via the UID-keyed syncManager (one doc per rule at
+ * users/{uid}/rules/{ruleId}). Keeping this function's own debounce timer
+ * preserves its call-anytime contract; schedulePush debounces again.
  */
 export function syncRulesToFirebase(user) {
   const target = normalizeUser(user ?? currentSessionUser());
   if (!target || typeof localStorage === 'undefined') return;
   if (rulesSyncTimer) clearTimeout(rulesSyncTimer);
-  rulesSyncTimer = setTimeout(async () => {
+  rulesSyncTimer = setTimeout(() => {
     try {
-      const rules = readRawRules(target);
-      await setDoc(doc(db, 'users', target), { rules }, { merge: true });
-    } catch (e) {
-      console.error('Failed to sync rules to Firebase:', e);
+      schedulePush(target);
+    } catch {
+      // scheduling never blocks a local rule write
     }
   }, 1000);
 }
