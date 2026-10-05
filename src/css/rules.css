@@ -1,0 +1,248 @@
+/* ============================================
+   Rules page — MY TRADING RULES dashboard
+   Reuses .card/.btn/.badge/.form-group/.modal
+   ============================================ */
+
+.rules-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: var(--space-lg);
+}
+
+.rules-summary .badge {
+  padding: 6px 14px;
+  font-size: var(--font-size-xs);
+}
+
+.rules-summary .chip-active {
+  background: var(--color-tp-bg);
+  color: var(--color-tp);
+  border: 1px solid var(--color-tp-border);
+}
+
+.rules-summary .chip-required {
+  background: var(--accent-gold-dim);
+  color: var(--accent-gold);
+  border: 1px solid var(--accent-gold);
+}
+
+.rules-summary .chip-cat {
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+}
+
+.rules-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-lg);
+  align-items: flex-end;
+}
+
+.rules-filters .form-group {
+  margin-bottom: 0;
+  min-width: 160px;
+  flex: 1;
+}
+
+.rules-filters input,
+.rules-filters select {
+  min-height: 40px;
+}
+
+.rules-toggle-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.rules-toggle-wrap input {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--accent-gold);
+  cursor: pointer;
+}
+
+.rules-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: var(--space-md);
+}
+
+.rule-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rule-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.rule-card-name {
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-bold);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.rule-card-desc {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.rule-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.badge-required {
+  background: var(--accent-gold-dim);
+  color: var(--accent-gold);
+  border: 1px solid var(--accent-gold);
+}
+
+.badge-weight {
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+}
+
+.badge-cat {
+  background: var(--color-info-bg);
+  color: var(--color-info);
+  border: 1px solid rgba(64, 169, 255, 0.25);
+}
+
+.rule-card-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+
+.rule-card-actions .btn {
+  min-height: 40px;
+}
+
+.rule-why {
+  margin-top: 4px;
+  border-top: 1px solid var(--border-color);
+  padding-top: 8px;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.rule-why summary {
+  cursor: pointer;
+  color: var(--accent-gold);
+  font-weight: var(--font-weight-semibold);
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+}
+
+.rule-why dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  margin-top: 8px;
+}
+
+.rule-why dt {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.rule-why dd {
+  overflow-wrap: anywhere;
+}
+
+/* Builder modal extras */
+.session-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.session-checks label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  min-height: 40px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.session-checks input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent-gold);
+}
+
+.check-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.check-inline input {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--accent-gold);
+  cursor: pointer;
+}
+
+.rules-hint {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.preview-result-state {
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-bold);
+  text-align: center;
+  padding: var(--space-md) 0;
+}
+
+.preview-result-state.ready { color: var(--color-tp); }
+.preview-result-state.waiting { color: var(--color-warning); }
+.preview-result-state.no-trade { color: var(--color-sl); }
+
+@media (max-width: 768px) {
+  .rules-grid {
+    grid-template-columns: 1fr;
+  }
+  .rules-filters {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .rules-filters .form-group {
+    width: 100%;
+  }
+}
