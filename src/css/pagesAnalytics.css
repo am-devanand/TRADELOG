@@ -1,0 +1,214 @@
+/* ============================================
+   TRADELOG — Phase 7 analytics pages (strategy / process / improvements)
+   Page-specific layout only. Primitives (filters, metric, chart) live
+   in css/analytics.css which pages import alongside this file.
+   Mobile: stacked cards / scrollable tables, never desktop-width at 390px.
+   ============================================ */
+
+/* ---- Segmented tab nav (shared by all analytics pages + legacy page) ---- */
+.analytics-tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: 4px;
+  margin-bottom: var(--space-lg);
+  max-width: 100%;
+}
+
+.analytics-tab {
+  flex: 1 1 auto;
+  min-width: 120px;
+  text-align: center;
+  padding: 10px 14px;
+  min-height: 44px;
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.analytics-tab:hover {
+  color: var(--text-primary);
+  background: var(--bg-input);
+  text-decoration: none;
+}
+
+.analytics-tab[aria-current="page"] {
+  background: var(--accent-gold);
+  color: #1a1a1a;
+}
+
+/* ---- Page head ---- */
+.analytics-page-head {
+  margin-bottom: var(--space-md);
+}
+
+.analytics-page-head h1 {
+  margin: 0 0 4px;
+}
+
+.analytics-page-sub {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  margin: 0;
+}
+
+/* ---- Sortable table ---- */
+.analytics-sort-btn {
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 40px;
+}
+
+.analytics-sort-btn:focus-visible {
+  outline: 2px solid var(--accent-gold);
+  outline-offset: 2px;
+}
+
+.analytics-row-link {
+  cursor: pointer;
+}
+
+.analytics-row-link:hover td {
+  background: var(--bg-elevated);
+}
+
+.analytics-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.analytics-na-cell {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* ---- Pattern / improvement cards ---- */
+.analytics-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--space-md);
+}
+
+.analytics-pattern-card,
+.analytics-improvement-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.analytics-card-title {
+  margin: 0;
+  font-size: var(--font-size-base);
+}
+
+.analytics-evidence {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  margin: 0;
+}
+
+.analytics-review-q {
+  font-size: var(--font-size-sm);
+  font-style: italic;
+  color: var(--text-secondary);
+  border-left: 3px solid var(--accent-gold);
+  padding-left: 10px;
+  margin: 0;
+}
+
+.analytics-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: auto;
+}
+
+.analytics-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.analytics-status-row select {
+  min-height: 40px;
+  font-size: var(--font-size-sm);
+}
+
+/* ---- Matrix ---- */
+.analytics-matrix {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--space-md);
+}
+
+/* ---- Modal form (uses global #modal-overlay) ---- */
+.analytics-form .form-group {
+  margin-bottom: var(--space-md);
+}
+
+.analytics-form label {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.analytics-form input,
+.analytics-form textarea,
+.analytics-form select {
+  width: 100%;
+  min-height: 44px;
+  font-size: var(--font-size-sm);
+}
+
+.analytics-form textarea {
+  min-height: 88px;
+  resize: vertical;
+}
+
+/* ---- Section spacing ---- */
+.analytics-section-title {
+  margin: 0 0 var(--space-sm);
+  font-size: var(--font-size-base);
+}
+
+.analytics-muted {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+/* ---- Mobile ---- */
+@media (max-width: 860px) {
+  .analytics-tabs {
+    flex-direction: column;
+  }
+
+  .analytics-tab {
+    width: 100%;
+  }
+
+  .analytics-cards-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 390px) {
+  .analytics-tab {
+    min-height: 44px;
+    font-size: var(--font-size-sm);
+  }
+}

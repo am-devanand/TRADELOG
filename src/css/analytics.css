@@ -1,0 +1,366 @@
+/* ============================================
+   TRADELOG — Analytics layout + filter/metric/chart primitives
+   Desktop: left filter rail + right content grid.
+   Mobile (390px / 320px): stacked FILTERS → SUMMARY → CHART → TABLE/CARDS.
+   Reuses tokens from variables.css only — no palette redesign.
+   Pages import this file: `import '../../css/analytics.css';`
+   ============================================ */
+
+/* ---- Page layout: rail + content ---- */
+.analytics-layout {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: var(--space-lg);
+  align-items: start;
+}
+
+.analytics-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  min-width: 0;
+}
+
+.analytics-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--space-md);
+}
+
+.analytics-charts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: var(--space-lg);
+}
+
+.analytics-table-card {
+  min-width: 0;
+}
+
+/* Order hooks so pages can enforce FILTERS → SUMMARY → CHART → TABLE */
+.analytics-region-filters { order: 1; }
+.analytics-region-summary { order: 2; }
+.analytics-region-charts { order: 3; }
+.analytics-region-table { order: 4; }
+
+/* ---- Filter bar ---- */
+.analytics-filters {
+  padding: var(--space-md);
+}
+
+.analytics-layout > .analytics-filters {
+  position: sticky;
+  top: 76px;
+  max-height: calc(100vh - 96px);
+  overflow-y: auto;
+}
+
+.analytics-filters-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
+}
+
+.analytics-filters-title {
+  margin: 0;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+}
+
+.analytics-filters-grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+/* Full-width stacked variant (used when rail collapses on mobile) */
+.analytics-filters--bar .analytics-filters-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.analytics-field {
+  margin-bottom: 0;
+  min-width: 0;
+}
+
+.analytics-field select,
+.analytics-field input[type="date"] {
+  min-height: 40px;
+  width: 100%;
+  font-size: var(--font-size-sm);
+}
+
+/* Compact checkbox dropdown (native details/summary popover) */
+.analytics-ms {
+  position: relative;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+}
+
+.analytics-ms > summary {
+  list-style: none;
+  cursor: pointer;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: 10px 14px;
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  border-radius: var(--radius-md);
+}
+
+.analytics-ms > summary::-webkit-details-marker {
+  display: none;
+}
+
+.analytics-ms > summary::after {
+  content: "▾";
+  color: var(--text-secondary);
+  flex: none;
+}
+
+.analytics-ms[open] > summary {
+  border-bottom: 1px solid var(--border-color);
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.analytics-ms-pop {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 220px;
+  overflow-y: auto;
+  padding: var(--space-sm);
+}
+
+.analytics-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.analytics-check:hover {
+  background: var(--bg-elevated);
+}
+
+.analytics-check input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  accent-color: var(--accent-gold);
+  margin: 0;
+  flex: none;
+}
+
+.analytics-check-empty {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  padding: 8px 10px;
+  margin: 0;
+}
+
+/* Active-filter chips */
+.analytics-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: var(--space-md);
+}
+
+.analytics-chips-empty {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  margin: 0;
+}
+
+.analytics-chip {
+  text-transform: none;
+  letter-spacing: normal;
+  gap: 6px;
+  max-width: 100%;
+}
+
+.analytics-chip-x {
+  background: transparent;
+  color: inherit;
+  font-size: var(--font-size-xs);
+  min-width: 40px;
+  min-height: 40px;
+  margin: -10px -10px -10px 0;
+  padding: 10px 12px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.analytics-chip-x:hover {
+  background: rgba(0, 0, 0, 0.15);
+}
+
+/* ---- Metric cards ---- */
+.analytics-metric-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.analytics-metric-sub {
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  margin: 6px 0 0;
+}
+
+.analytics-metric-status {
+  margin-top: 10px;
+}
+
+.analytics-metric--na {
+  border-style: dashed;
+}
+
+.analytics-na-value {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.analytics-n,
+.analytics-sample {
+  flex: none;
+}
+
+/* ---- Chart cards ---- */
+.analytics-chart-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-md);
+}
+
+.analytics-chart-head h3 {
+  margin: 0;
+}
+
+.analytics-canvas-wrap {
+  position: relative;
+  min-height: 220px;
+}
+
+.analytics-canvas-wrap canvas {
+  max-width: 100%;
+}
+
+/* ---- Tables: scroll on small screens, never force desktop width ---- */
+.analytics-table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  max-width: 100%;
+}
+
+.analytics-table-scroll table {
+  min-width: 560px;
+}
+
+/* ---- Responsive: tablet ---- */
+@media (max-width: 1024px) {
+  .analytics-layout {
+    grid-template-columns: 240px minmax(0, 1fr);
+    gap: var(--space-md);
+  }
+}
+
+/* ---- Responsive: mobile — stacked FILTERS → SUMMARY → CHART → TABLE ---- */
+@media (max-width: 860px) {
+  .analytics-layout {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .analytics-layout > .analytics-filters {
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .analytics-filters-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  }
+
+  .analytics-charts-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 390px) {
+  .analytics-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-sm);
+  }
+
+  .analytics-filters-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-sm);
+  }
+
+  .analytics-table-scroll table {
+    min-width: 520px;
+  }
+
+  .analytics-table-scroll td,
+  .analytics-table-scroll th {
+    padding: 10px 12px;
+  }
+}
+
+/* 320px: single column, cards stack, tables become swipeable */
+@media (max-width: 340px) {
+  .analytics-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .analytics-filters-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .analytics-table-scroll table {
+    min-width: 480px;
+  }
+}
+
+/* ---- Safe-area support (notched phones, iOS Safari) ---- */
+@supports (padding: env(safe-area-inset-bottom)) {
+  .analytics-layout {
+    padding-left: env(safe-area-inset-left, 0);
+    padding-right: env(safe-area-inset-right, 0);
+    padding-bottom: env(safe-area-inset-bottom, 0);
+  }
+}
+
+/* ---- Reduced motion ---- */
+@media (prefers-reduced-motion: reduce) {
+  .analytics-ms > summary,
+  .analytics-check,
+  .analytics-chip-x {
+    transition: none;
+  }
+}
