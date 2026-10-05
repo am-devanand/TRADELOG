@@ -1,0 +1,103 @@
+/* Screenshot gallery + lightbox. Reuses .card/.btn/.badge vars from base.css. */
+
+.shot-groups { display: flex; flex-direction: column; gap: var(--space-md); }
+.shot-group-title {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 1px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+.shot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px;
+}
+.shot-thumb {
+  position: relative;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--bg-input);
+  cursor: zoom-in;
+  padding: 0;
+  aspect-ratio: 16 / 10;
+}
+.shot-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.shot-thumb:focus-visible { outline: 2px solid var(--accent-gold); outline-offset: 2px; }
+.shot-name {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.75));
+  padding: 14px 6px 5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+}
+.shot-del {
+  position: absolute;
+  top: 4px; right: 4px;
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  border: 1px solid var(--border-color);
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.shot-del:hover { border-color: var(--color-sl); color: var(--color-sl); }
+.shot-empty {
+  border: 2px dashed var(--border-color);
+  border-radius: var(--radius-md);
+  padding: var(--space-lg);
+  text-align: center;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+.shot-add-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.shot-err { font-size: var(--font-size-xs); color: var(--color-sl); margin-top: 8px; }
+
+/* Lightbox */
+.shot-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(0, 0, 0, 0.9);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 16px;
+}
+.shot-lightbox[hidden] { display: none; }
+.shot-lightbox img {
+  max-width: min(96vw, 1100px);
+  max-height: 78vh;
+  object-fit: contain;
+  border-radius: var(--radius-md);
+}
+.shot-lightbox-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+@media (max-width: 640px) {
+  .shot-grid { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px; }
+  .shot-add-row .btn { flex: 1 1 auto; min-height: 44px; }
+  .shot-lightbox img { max-height: 70vh; }
+}

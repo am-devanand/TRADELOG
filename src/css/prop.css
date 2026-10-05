@@ -1,0 +1,136 @@
+/* ============================================
+   Prop dashboard — /prop
+   Reuses .card/.badge/.btn/.stat-card/.progress from base.css
+   Status colors use existing tokens only.
+   ============================================ */
+
+.prop-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: var(--space-md);
+  margin-bottom: var(--space-lg);
+}
+
+.prop-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-md);
+  margin-bottom: var(--space-lg);
+}
+
+.prop-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.prop-card-head h3 {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+}
+
+.prop-card-vals { font-size: var(--font-size-sm); color: var(--text-secondary); }
+.prop-card-vals strong { font-size: var(--font-size-lg); color: var(--text-primary); }
+.prop-card-note { font-size: var(--font-size-xs); color: var(--text-secondary); margin-top: 6px; line-height: 1.6; }
+.prop-muted { color: var(--text-muted); font-size: var(--font-size-sm); }
+
+/* Progress (drawdownMeter + profit target reuse .progress hook) */
+.progress.prop-meter {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--bg-input);
+  overflow: hidden;
+  margin: 8px 0 4px;
+  border: 1px solid var(--border-color);
+}
+.progress.prop-meter .progress-fill { height: 100%; transition: width 0.2s ease; background: var(--color-tp); }
+.progress.prop-meter.is-warning .progress-fill { background: var(--color-warning); }
+.progress.prop-meter.is-critical .progress-fill { background: var(--accent-gold); }
+.progress.prop-meter.is-breach .progress-fill { background: var(--color-sl); }
+.progress.prop-meter.is-disabled .progress-fill { background: var(--text-muted); }
+.prop-meter-label { font-size: var(--font-size-xs); color: var(--text-secondary); }
+
+/* Rule monitor rows */
+.prop-rule-list { display: flex; flex-direction: column; gap: 8px; }
+.prop-rule-row { padding: 0; overflow: hidden; }
+.prop-rule-row .prop-rule-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  min-height: 44px;
+}
+.prop-rule-head:hover { background: var(--bg-card-hover); }
+.prop-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--color-tp); flex: none; }
+.prop-status-safe .prop-dot { background: var(--color-tp); }
+.prop-status-warning .prop-dot { background: var(--color-warning); }
+.prop-status-critical .prop-dot { background: var(--accent-gold); }
+.prop-status-breach .prop-dot { background: var(--color-sl); }
+.prop-status-disabled .prop-dot { background: var(--text-muted); }
+.prop-rule-name { font-weight: var(--font-weight-semibold); flex: 1; min-width: 120px; overflow-wrap: anywhere; }
+.prop-rule-vals { font-size: var(--font-size-sm); color: var(--text-secondary); white-space: nowrap; }
+.prop-rule-caret { color: var(--text-muted); }
+.prop-rule-reason { border-top: 1px solid var(--border-color); padding: 10px 16px 14px 32px; }
+.prop-rule-reason p { font-size: var(--font-size-xs); color: var(--text-secondary); line-height: 1.6; overflow-wrap: anywhere; }
+
+/* Status badges beyond base .badge-tp/.badge-sl/.badge-gold */
+.prop-badge-warning { background: var(--color-warning-bg); color: var(--color-warning); border: 1px solid rgba(250, 173, 20, 0.3); }
+.prop-badge-critical { background: var(--accent-gold-dim); color: var(--accent-gold); border: 1px solid var(--accent-gold); }
+.prop-badge-disabled { background: var(--bg-elevated); color: var(--text-muted); border: 1px solid var(--border-color-hover); }
+
+/* Account status banner */
+.prop-status-banner {
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  margin-top: var(--space-lg);
+  border: 2px solid var(--border-color);
+  background: var(--bg-card);
+}
+.prop-status-banner.is-safe { border-color: var(--color-tp); }
+.prop-status-banner.is-warning { border-color: var(--color-warning); }
+.prop-status-banner.is-critical { border-color: var(--accent-gold); }
+.prop-status-banner.is-breach { border-color: var(--color-sl); }
+.prop-banner-title { font-size: var(--font-size-lg); font-weight: var(--font-weight-bold); display: flex; align-items: center; gap: 8px; }
+.prop-status-banner.is-safe .prop-banner-title { color: var(--color-tp); }
+.prop-status-banner.is-warning .prop-banner-title { color: var(--color-warning); }
+.prop-status-banner.is-critical .prop-banner-title { color: var(--accent-gold); }
+.prop-status-banner.is-breach .prop-banner-title { color: var(--color-sl); }
+.prop-banner-lines { margin-top: 8px; font-size: var(--font-size-sm); color: var(--text-secondary); line-height: 1.7; }
+
+/* Selector + section spacing */
+.prop-selector-row { display: flex; gap: var(--space-sm); align-items: flex-end; flex-wrap: wrap; margin-bottom: var(--space-lg); }
+.prop-selector-row .form-group { margin-bottom: 0; min-width: 240px; flex: 1; max-width: 420px; }
+.prop-section-title { font-size: var(--font-size-md); font-weight: var(--font-weight-semibold); margin: var(--space-lg) 0 12px; }
+.prop-account-header { margin-bottom: 4px; }
+.prop-account-header h2 { font-size: var(--font-size-md); letter-spacing: 0.5px; }
+
+/* Edit modal rows */
+.prop-edit-row {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  margin-bottom: 10px;
+  background: var(--bg-input);
+}
+.prop-edit-row h4 { font-size: var(--font-size-sm); margin-bottom: 8px; }
+.prop-edit-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; }
+.prop-edit-grid input[type="number"] { width: 100%; }
+.prop-edit-check { display: flex; align-items: center; gap: 8px; font-size: var(--font-size-sm); color: var(--text-secondary); }
+.prop-edit-check input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--accent-gold); }
+
+@media (max-width: 768px) {
+  .prop-grid { grid-template-columns: 1fr; }
+  .prop-summary-grid { grid-template-columns: 1fr; }
+  .prop-selector-row { flex-direction: column; align-items: stretch; }
+  .prop-selector-row .form-group { max-width: none; }
+  .prop-rule-vals { white-space: normal; text-align: right; }
+}

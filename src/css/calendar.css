@@ -1,0 +1,234 @@
+.cal-page .cal-controls {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.cal-page .cal-controls select {
+  width: auto;
+  min-width: 170px;
+  padding: 8px 32px 8px 12px;
+  font-size: var(--font-size-sm);
+}
+
+.cal-nav {
+  display: flex;
+  gap: var(--space-xs);
+  align-items: center;
+}
+
+.cal-month {
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-bold);
+  margin-bottom: var(--space-md);
+}
+
+.cal-grid-card {
+  margin-bottom: var(--space-lg);
+  overflow-x: auto;
+}
+
+.cal-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(40px, 1fr));
+  gap: 6px;
+  margin-bottom: 6px;
+  min-width: 340px;
+}
+
+.cal-weekdays span {
+  text-align: center;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: var(--font-weight-semibold);
+}
+
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(40px, 1fr));
+  gap: 6px;
+  min-width: 340px;
+}
+
+.cal-cell {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 8px 6px;
+  min-height: 86px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  text-align: left;
+  color: var(--text-primary);
+  min-width: 0;
+}
+
+.cal-cell:hover {
+  border-color: var(--accent-gold);
+  background: var(--bg-card-hover);
+}
+
+.cal-cell.is-selected {
+  border-color: var(--accent-gold);
+  box-shadow: 0 0 0 2px var(--accent-gold-dim);
+}
+
+.cal-cell.is-today .cal-daynum {
+  background: var(--accent-gold);
+  color: var(--text-inverse);
+}
+
+.cal-daynum {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-full);
+}
+
+.cal-count {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.cal-pnl,
+.cal-r {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.cal-pnl.positive,
+.cal-r.positive,
+.positive {
+  color: var(--color-tp);
+}
+
+.cal-pnl.negative,
+.cal-r.negative,
+.negative {
+  color: var(--color-sl);
+}
+
+.cal-pnl.flat,
+.cal-r.flat {
+  color: var(--text-secondary);
+}
+
+.cal-cell.has-profit {
+  border-left: 3px solid var(--color-tp);
+}
+
+.cal-cell.has-loss {
+  border-left: 3px solid var(--color-sl);
+}
+
+.cal-cell.is-flat {
+  border-left: 3px solid var(--border-color-hover);
+}
+
+.cal-cell.is-empty .cal-daynum {
+  color: var(--text-secondary);
+}
+
+.cal-notrades {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  letter-spacing: 0.4px;
+  margin-top: auto;
+}
+
+.cal-cell.is-outside {
+  opacity: 0.45;
+}
+
+.cal-cell.is-future {
+  opacity: 0.5;
+}
+
+.cal-cell.is-weekend {
+  background: var(--bg-input);
+}
+
+.cal-cell.is-weekend.has-profit,
+.cal-cell.is-weekend.has-loss {
+  background: var(--bg-elevated);
+}
+
+.cal-grade {
+  margin-top: 2px;
+}
+
+.grade-A {
+  border-color: var(--color-tp-border);
+  color: var(--color-tp);
+  background: var(--color-tp-bg);
+}
+
+.grade-D,
+.grade-F {
+  border-color: var(--color-sl-border);
+  color: var(--color-sl);
+  background: var(--color-sl-bg);
+}
+
+.cal-detail-head h3 {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-bold);
+  margin-bottom: var(--space-md);
+}
+
+.cal-daytotals {
+  margin-bottom: var(--space-md);
+}
+
+.cal-grade-val {
+  font-size: var(--font-size-base);
+}
+
+.cal-muted {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-normal);
+}
+
+.cal-detail td.positive,
+.cal-detail td.negative {
+  font-weight: var(--font-weight-semibold);
+}
+
+@media (max-width: 640px) {
+  .cal-cell {
+    min-height: 64px;
+    padding: 6px 4px;
+  }
+
+  .cal-pnl,
+  .cal-r {
+    font-size: 10px;
+  }
+
+  .cal-grade {
+    font-size: 10px;
+    padding: 1px 6px;
+  }
+
+  .cal-page .cal-controls {
+    width: 100%;
+  }
+
+  .cal-page .cal-controls select {
+    flex: 1;
+  }
+}
