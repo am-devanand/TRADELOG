@@ -58,15 +58,29 @@ async function probe({ who, method, docPath, expect, note }) {
   }
 
   const res = await fetch(url, init);
-  let allowed = res.ok;
-  let detail = allowed ? 'ALLOWED' : 'DENIED';
-  if (!allowed) {
-    const body = await res.json().catch(() => ({}));
-    detail = `DENIED (${res.status} ${body.error?.status || ''})`.trim();
-  }
 
-  const pass = allowed === (expect === 'ALLOWED');
-  results.push({ row: `${who} ${method} ${docPath}`, expect, got: detail, pass, note });
+  // Distinguish three outcomes, because conflating them hides whether the
+  // rules actually permitted the request:
+  //   2xx            -> ALLOWED, document exists
+  //   404 NOT_FOUND  -> PERMITTED, rules allowed but no such document.
+  //                     Firestore only reports absence once rules have passed.
+  //   403 DENIED     -> rules refused (and it refuses before checking
+  //                     existence, so a 403 never leaks whether a doc exists).
+  let outcome;
+  if (res.ok) {
+    outcome = 'ALLOWED';
+  } else if (res.status === 404) {
+    outcome = 'PERMITTED';
+  } else {
+    outcome = 'DENIED';
+  }
+  const detail = outcome === 'ALLOWED'
+    ? 'ALLOWED'
+    : `${outcome} (${res.status}${outcome === 'DENIED' ? ' PERMISSION_DENIED' : ' NOT_FOUND'})`;
+
+  const permitted = outcome !== 'DENIED';
+  const pass = permitted === (expect === 'ALLOWED');
+  results.push({ row: `${who} ${method} ${docPath}`, expect, got: detail, pass });
   const mark = pass ? 'PASS' : 'FAIL';
   console.log(`  ${mark}  [${who}] ${method} ${docPath} -> ${detail} (expected ${expect})`);
   return pass;
@@ -86,15 +100,17 @@ async function main() {
   await probe({ who: 'none', method: 'GET', docPath: `users/${A}`, expect: 'DENIED' });
   await probe({ who: 'none', method: 'PATCH', docPath: `users/${A}`, expect: 'DENIED' });
 
-  console.log('\n--- owner access ---');
-  await probe({ who: 'A', method: 'GET', docPath: `users/${A}`, expect: 'ALLOWED', note: 'profile' });
+  console.log('\n--- owner access (write first, then read back the same document) ---');
   await probe({ who: 'A', method: 'PATCH', docPath: `users/${A}`, expect: 'ALLOWED' });
-  await probe({ who: 'A', method: 'GET', docPath: `users/${A}/accounts/acc1`, expect: 'ALLOWED' });
+  await probe({ who: 'A', method: 'GET', docPath: `users/${A}`, expect: 'ALLOWED', note: 'profile read back' });
   await probe({ who: 'A', method: 'PATCH', docPath: `users/${A}/accounts/acc1`, expect: 'ALLOWED', note: 'no id field -> partial merge allowed' });
-  await probe({ who: 'A', method: 'PATCH', docPath: `users/${A}/accounts/acc1`, expect: 'ALLOWED', note: 'sends id=acc1' });
+  await probe({ who: 'A', method: 'GET', docPath: `users/${A}/accounts/acc1`, expect: 'ALLOWED' });
+  await probe({ who: 'A', method: 'PATCH', docPath: `users/${A}/accounts/acc1/journal/e1`, expect: 'ALLOWED' });
   await probe({ who: 'A', method: 'GET', docPath: `users/${A}/accounts/acc1/journal/e1`, expect: 'ALLOWED', note: 'nested journal' });
-  await probe({ who: 'A', method: 'GET', docPath: `users/${A}/legacyTrades/acc1/entries/t1`, expect: 'ALLOWED', note: 'legacy trades' });
+  await probe({ who: 'A', method: 'PATCH', docPath: `users/${A}/legacyTrades/acc1/entries/t1`, expect: 'ALLOWED', note: 'legacy trades' });
+  await probe({ who: 'A', method: 'GET', docPath: `users/${A}/legacyTrades/acc1/entries/t1`, expect: 'ALLOWED' });
   await probe({ who: 'A', method: 'PATCH', docPath: `users/${A}/rules/r1`, expect: 'ALLOWED' });
+  await probe({ who: 'A', method: 'GET', docPath: `users/${A}/rules/r1`, expect: 'ALLOWED' });
 
   console.log('\n--- cross-user (must always be denied) ---');
   await probe({ who: 'A', method: 'GET', docPath: `users/${B}`, expect: 'DENIED' });
