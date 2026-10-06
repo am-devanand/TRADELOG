@@ -259,6 +259,7 @@ const pLegacy = (uid, accountId, tradeId) => ['users', uid, 'legacyTrades', Stri
 const cLegacyAccounts = (uid) => ['users', uid, 'legacyTrades'];
 const cLegacyEntries = (uid, accountId) => ['users', uid, 'legacyTrades', String(accountId), 'entries'];
 const pRule = (uid, id) => ['users', uid, 'rules', String(id)];
+const pStrategy = (uid, id) => ['users', uid, 'strategies', String(id)];
 const pSetup = (uid, id) => ['users', uid, 'setups', String(id)];
 const pReview = (uid, id) => ['users', uid, 'reviews', String(id)];
 const pPropConfig = (uid, accountId) => ['users', uid, 'propConfigs', String(accountId)];
@@ -269,6 +270,7 @@ const cAccounts = (uid) => ['users', uid, 'accounts'];
 const cJournal = (uid, accountId) => ['users', uid, 'accounts', String(accountId), 'journal'];
 const cTrades = (uid) => ['users', uid, 'trades'];
 const cRules = (uid) => ['users', uid, 'rules'];
+const cStrategies = (uid) => ['users', uid, 'strategies'];
 const cSetups = (uid) => ['users', uid, 'setups'];
 const cReviews = (uid) => ['users', uid, 'reviews'];
 const cPropConfigs = (uid) => ['users', uid, 'propConfigs'];
@@ -298,6 +300,7 @@ function readLocalSnapshot(username) {
     executedTrades: asArray(readLocal(`tradelog_exectrades_${username}`, [])),
     legacyTrades,
     rules: asArray(readLocal(`tradelog_rules_${username}`, [])),
+    strategies: asArray(readLocal(`tradelog_strategies_${username}`, [])),
     setups: asArray(readLocal(`tradelog_setups_${username}`, [])),
     reviews: asArray(readLocal(`tradelog_reviews_${username}`, [])),
     propConfigs: asObject(readLocal(`tradelog_propconfig_${username}`, {})),
@@ -441,11 +444,12 @@ function withId(id, body) {
 
 async function fetchRemote(uid) {
   const be = backend();
-  const [profile, accountDocs, tradeDocs, ruleDocs, setupDocs, reviewDocs, propDocs, improvementDocs, auditDocs, legacyAccountDocs] = await Promise.all([
+  const [profile, accountDocs, tradeDocs, ruleDocs, strategyDocs, setupDocs, reviewDocs, propDocs, improvementDocs, auditDocs, legacyAccountDocs] = await Promise.all([
     be.getDocData(pProfile(uid)).catch(() => null),
     be.listCollection(cAccounts(uid)).catch(() => []),
     be.listCollection(cTrades(uid)).catch(() => []),
     be.listCollection(cRules(uid)).catch(() => []),
+    be.listCollection(cStrategies(uid)).catch(() => []),
     be.listCollection(cSetups(uid)).catch(() => []),
     be.listCollection(cReviews(uid)).catch(() => []),
     be.listCollection(cPropConfigs(uid)).catch(() => []),
@@ -483,6 +487,7 @@ async function fetchRemote(uid) {
     executedTrades: (Array.isArray(tradeDocs) ? tradeDocs : []).map((d) => withId(d.id, d.data)),
     legacyTrades,
     rules: (Array.isArray(ruleDocs) ? ruleDocs : []).map((d) => withId(d.id, d.data)),
+    strategies: (Array.isArray(strategyDocs) ? strategyDocs : []).map((d) => withId(d.id, d.data)),
     setups: (Array.isArray(setupDocs) ? setupDocs : []).map((d) => withId(d.id, d.data)),
     reviews: (Array.isArray(reviewDocs) ? reviewDocs : []).map((d) => withId(d.id, d.data)),
     propConfigs: Object.fromEntries(
@@ -500,6 +505,7 @@ function toLocalShapedPayload(snap) {
     executedTrades: Array.isArray(snap.executedTrades) ? plainCopy(snap.executedTrades) : [],
     legacyTrades: plainCopy(snap.legacyTrades && typeof snap.legacyTrades === 'object' ? snap.legacyTrades : {}),
     rules: Array.isArray(snap.rules) ? plainCopy(snap.rules) : [],
+    strategies: Array.isArray(snap.strategies) ? plainCopy(snap.strategies) : [],
     setups: Array.isArray(snap.setups) ? plainCopy(snap.setups) : [],
     reviews: Array.isArray(snap.reviews) ? plainCopy(snap.reviews) : [],
     propConfigs: plainCopy(snap.propConfigs && typeof snap.propConfigs === 'object' ? snap.propConfigs : {}),
@@ -527,6 +533,7 @@ function writeSnapshotToLocal(username, snap) {
   }
   writeLocal(`tradelog_exectrades_${username}`, snap.executedTrades || []);
   writeLocal(`tradelog_rules_${username}`, snap.rules || []);
+  writeLocal(`tradelog_strategies_${username}`, snap.strategies || []);
   writeLocal(`tradelog_setups_${username}`, snap.setups || []);
   writeLocal(`tradelog_reviews_${username}`, snap.reviews || []);
   writeLocal(`tradelog_propconfig_${username}`, snap.propConfigs || {});
@@ -666,6 +673,7 @@ function buildPushEntries(uid, snap) {
     executedTrades: 0,
     legacyTrades: 0,
     rules: 0,
+    strategies: 0,
     setups: 0,
     reviews: 0,
     propConfigs: 0,
@@ -705,6 +713,7 @@ function buildPushEntries(uid, snap) {
   };
   pushList(snap.executedTrades, pTrade, 'executedTrades');
   pushList(snap.rules, pRule, 'rules');
+  pushList(snap.strategies, pStrategy, 'strategies');
   pushList(snap.setups, pSetup, 'setups');
   pushList(snap.reviews, pReview, 'reviews');
   pushList(snap.improvements, pImprovement, 'improvements');
@@ -726,6 +735,7 @@ async function doPush(username, uid) {
   for (const aid of Object.keys(snap.legacyTrades)) if (ensureIds(snap.legacyTrades[aid])) idsAdded = true;
   if (ensureIds(snap.executedTrades)) idsAdded = true;
   if (ensureIds(snap.rules)) idsAdded = true;
+  if (ensureIds(snap.strategies)) idsAdded = true;
   if (ensureIds(snap.setups)) idsAdded = true;
   if (ensureIds(snap.reviews)) idsAdded = true;
   if (ensureIds(snap.improvements)) idsAdded = true;
@@ -847,6 +857,7 @@ export async function pullAll(user) {
         executedTrades: mergeById(local.executedTrades, remote.executedTrades).merged,
         legacyTrades: {},
         rules: mergeById(local.rules, remote.rules).merged,
+        strategies: mergeById(local.strategies, remote.strategies).merged,
         setups: mergeById(local.setups, remote.setups).merged,
         reviews: mergeById(local.reviews, remote.reviews).merged,
         propConfigs: { ...(local.propConfigs || {}) },
@@ -921,6 +932,7 @@ export async function reconcile(user) {
       executedTrades: [],
       legacyTrades: {},
       rules: [],
+      strategies: [],
       setups: [],
       reviews: [],
       propConfigs: { ...(local.propConfigs || {}) },
@@ -961,6 +973,7 @@ export async function reconcile(user) {
     reconcileList('accounts', local.accounts, remote.accounts, (u, id) => pAccount(u, id), stripAccountBody);
     reconcileList('executedTrades', local.executedTrades, remote.executedTrades, (u, id) => pTrade(u, id));
     reconcileList('rules', local.rules, remote.rules, (u, id) => pRule(u, id));
+    reconcileList('strategies', local.strategies, remote.strategies, (u, id) => pStrategy(u, id));
     reconcileList('setups', local.setups, remote.setups, (u, id) => pSetup(u, id));
     reconcileList('reviews', local.reviews, remote.reviews, (u, id) => pReview(u, id));
     reconcileList('improvements', local.improvements, remote.improvements, (u, id) => pImprovement(u, id));

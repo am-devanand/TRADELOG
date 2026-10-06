@@ -684,3 +684,203 @@ export const INTEGRITY_CODES = {
 };
 
 export const RECONCILIATION_TOLERANCE = 0.01;
+
+// ---- Strategies (Phase 9A versioned strategy storage; pure, no storage side effects) ---
+// Append-only contract: the replay engine is built against these exact keys.
+// Strategies never influence real trading decisions.
+
+export const STRATEGY_STATUSES = ['DRAFT', 'ACTIVE', 'ARCHIVED'];
+
+export const STRATEGY_CONDITION_TYPES = [
+  'PRICE_ABOVE',
+  'PRICE_BELOW',
+  'CROSS_UP',
+  'CROSS_DOWN',
+  'TOUCHES_LEVEL',
+  'BREAKS_STRUCTURE',
+  'HTF_BIAS',
+  'CANDLE_CLOSE',
+  'INSIDE_RANGE',
+  'CUSTOM',
+];
+
+export const STRATEGY_SL_MODELS = ['FIXED_POINTS', 'FIXED_PERCENT', 'STRUCTURE'];
+
+export const STRATEGY_TP_MODELS = ['FIXED_POINTS', 'FIXED_PERCENT', 'STRUCTURE'];
+
+export const STRATEGY_EXIT_MODELS = ['FIXED_RR', 'FIXED_TP', 'STRUCTURE', 'TRAILING'];
+
+export const STRATEGY_DIRECTIONS = ['AUTO', 'LONG', 'SHORT'];
+
+export const SIMULATED_TRADE_STATUS = 'SIMULATED';
+
+export const REPLAY_EXIT_REASONS = ['SL_HIT', 'TP_HIT', 'MAX_HOLD', 'END_OF_DATA', 'MANUAL'];
+
+function normalizeStrategyStatus(raw) {
+  const s = String(raw ?? 'DRAFT').trim().toUpperCase();
+  return STRATEGY_STATUSES.includes(s) ? s : 'DRAFT';
+}
+
+function normalizeStrategyDirection(raw) {
+  const d = String(raw ?? 'AUTO').trim().toUpperCase();
+  return STRATEGY_DIRECTIONS.includes(d) ? d : 'AUTO';
+}
+
+function normalizeStrategyExitModel(raw) {
+  const m = String(raw ?? 'FIXED_RR').trim().toUpperCase();
+  return STRATEGY_EXIT_MODELS.includes(m) ? m : 'FIXED_RR';
+}
+
+function normalizeStrategyConditions(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((c) => c && typeof c === 'object' && !Array.isArray(c))
+    .map((c) => ({
+      id: c.id ?? '',
+      type: STRATEGY_CONDITION_TYPES.includes(String(c.type ?? '').trim().toUpperCase())
+        ? String(c.type).trim().toUpperCase()
+        : 'CUSTOM',
+      params: c.params && typeof c.params === 'object' && !Array.isArray(c.params) ? { ...c.params } : {},
+    }));
+}
+
+export const DEFAULT_STRATEGY = {
+  id: '',
+  userId: '',
+  name: '',
+  description: '',
+  status: 'DRAFT',
+  version: 1,
+  pairs: [],
+  sessions: [],
+  timeframes: [],
+  direction: 'AUTO',
+  entryConditions: [],
+  confirmationConditions: [],
+  minRR: null,
+  riskPercent: null,
+  stopLoss: { model: 'FIXED_POINTS', value: null },
+  takeProfit: { model: 'FIXED_TP', value: null },
+  exitModel: 'FIXED_RR',
+  maxHoldCandles: null,
+  ruleRefs: [],
+  createdAt: '',
+  updatedAt: '',
+  versionCreatedAt: '',
+};
+
+/** Build a strategy with fresh id/timestamps over DEFAULT_STRATEGY */
+export function makeStrategy(overrides = {}, userId = '') {
+  const now = new Date().toISOString();
+  const o = overrides && typeof overrides === 'object' ? overrides : {};
+  const slSrc = o.stopLoss && typeof o.stopLoss === 'object' ? o.stopLoss : {};
+  const tpSrc = o.takeProfit && typeof o.takeProfit === 'object' ? o.takeProfit : {};
+  const slModel = STRATEGY_SL_MODELS.includes(String(slSrc.model ?? 'FIXED_POINTS').trim().toUpperCase())
+    ? String(slSrc.model).trim().toUpperCase()
+    : 'FIXED_POINTS';
+  const tpModel = STRATEGY_TP_MODELS.includes(String(tpSrc.model ?? 'FIXED_TP').trim().toUpperCase())
+    ? String(tpSrc.model).trim().toUpperCase()
+    : 'FIXED_TP';
+  const slValue = slSrc.value == null || slSrc.value === ''
+    ? null
+    : (Number.isFinite(Number(slSrc.value)) ? Number(slSrc.value) : null);
+  const tpValue = tpSrc.value == null || tpSrc.value === ''
+    ? null
+    : (Number.isFinite(Number(tpSrc.value)) ? Number(tpSrc.value) : null);
+  const versionRaw = Number(o.version);
+  return {
+    ...DEFAULT_STRATEGY,
+    ...o,
+    id: o.id || generateId(),
+    userId: String(o.userId ?? userId ?? '').trim().toLowerCase(),
+    name: String(o.name ?? ''),
+    description: o.description ?? '',
+    status: normalizeStrategyStatus(o.status),
+    version: Number.isInteger(versionRaw) && versionRaw >= 1 ? versionRaw : 1,
+    pairs: Array.isArray(o.pairs) ? [...o.pairs] : [],
+    sessions: Array.isArray(o.sessions) ? [...o.sessions] : [],
+    timeframes: Array.isArray(o.timeframes) ? [...o.timeframes] : [],
+    direction: normalizeStrategyDirection(o.direction),
+    entryConditions: normalizeStrategyConditions(o.entryConditions),
+    confirmationConditions: normalizeStrategyConditions(o.confirmationConditions),
+    minRR: o.minRR == null || o.minRR === '' ? null : (Number.isFinite(Number(o.minRR)) ? Number(o.minRR) : null),
+    riskPercent: o.riskPercent == null || o.riskPercent === ''
+      ? null
+      : (Number.isFinite(Number(o.riskPercent)) ? Number(o.riskPercent) : null),
+    stopLoss: { model: slModel, value: slValue },
+    takeProfit: { model: tpModel, value: tpValue },
+    exitModel: normalizeStrategyExitModel(o.exitModel),
+    maxHoldCandles: o.maxHoldCandles == null || o.maxHoldCandles === ''
+      ? null
+      : (Number.isInteger(Number(o.maxHoldCandles)) ? Number(o.maxHoldCandles) : null),
+    ruleRefs: Array.isArray(o.ruleRefs) ? [...o.ruleRefs] : [],
+    createdAt: o.createdAt || now,
+    updatedAt: now,
+    versionCreatedAt: o.versionCreatedAt || o.createdAt || now,
+  };
+}
+
+// ---- Simulated trades (Phase 9A replay output; pure, no storage side effects) ---
+// Simulated trades are reproducible from (runId + entryIndex) and are never
+// synced to the cloud. Ids are caller-supplied deterministic seeds — never
+// generateId() — so a replay re-run yields identical records.
+
+export const DEFAULT_SIMULATED_TRADE = {
+  id: '',
+  userId: '',
+  runId: '',
+  strategyId: '',
+  strategyVersion: 1,
+  pair: '',
+  direction: 'LONG',
+  entryIndex: 0,
+  entryTime: '',
+  entryPrice: 0,
+  exitTime: '',
+  exitPrice: 0,
+  exitReason: '',
+  pnl: 0,
+  rMultiple: 0,
+  status: 'SIMULATED',
+  createdAt: '',
+};
+
+/** Build a simulated trade with a deterministic id from the caller's seed */
+export function makeSimulatedTrade(overrides = {}, seed = '') {
+  const now = new Date().toISOString();
+  const o = overrides && typeof overrides === 'object' ? overrides : {};
+  const s = String(seed ?? '').trim();
+  // Deterministic id only: replay reproducibility forbids generateId() here.
+  // Precedence: explicit id > explicit seed > runId+entryIndex > runId > ''.
+  let id = String(o.id ?? '');
+  if (!id && s) id = `sim_${s}`;
+  if (!id && o.runId != null && String(o.runId) !== '') {
+    id = o.entryIndex != null && String(o.entryIndex) !== ''
+      ? `sim_${String(o.runId)}_${String(o.entryIndex)}`
+      : `sim_${String(o.runId)}`;
+  }
+  const exitReason = String(o.exitReason ?? '').trim().toUpperCase();
+  return {
+    ...DEFAULT_SIMULATED_TRADE,
+    ...o,
+    id,
+    userId: String(o.userId ?? '').trim().toLowerCase(),
+    runId: String(o.runId ?? ''),
+    strategyId: o.strategyId ?? '',
+    strategyVersion: Number.isInteger(Number(o.strategyVersion)) && Number(o.strategyVersion) >= 1
+      ? Number(o.strategyVersion)
+      : 1,
+    pair: o.pair ?? '',
+    direction: normalizeSetupDirection(o.direction),
+    entryIndex: Number.isInteger(Number(o.entryIndex)) ? Number(o.entryIndex) : 0,
+    entryTime: o.entryTime ?? '',
+    entryPrice: Number.isFinite(Number(o.entryPrice)) ? Number(o.entryPrice) : 0,
+    exitTime: o.exitTime ?? '',
+    exitPrice: Number.isFinite(Number(o.exitPrice)) ? Number(o.exitPrice) : 0,
+    exitReason: REPLAY_EXIT_REASONS.includes(exitReason) ? exitReason : '',
+    pnl: Number.isFinite(Number(o.pnl)) ? Number(o.pnl) : 0,
+    rMultiple: Number.isFinite(Number(o.rMultiple)) ? Number(o.rMultiple) : 0,
+    status: SIMULATED_TRADE_STATUS,
+    createdAt: o.createdAt || now,
+  };
+}

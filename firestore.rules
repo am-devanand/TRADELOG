@@ -135,6 +135,12 @@ service cloud.firestore {
         allow delete: if isOwner(uid);
       }
 
+      match /strategies/{strategyId} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid) && idMatches('id', strategyId);
+        allow delete: if isOwner(uid);
+      }
+
       match /setups/{setupId} {
         allow read: if isOwner(uid);
         allow create, update: if isOwner(uid) && idMatches('id', setupId);

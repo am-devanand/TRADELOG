@@ -44,6 +44,12 @@ export async function registerUser(username, password) {
     if (typeof localStorage !== 'undefined' && localStorage.getItem(`tradelog_audit_${clean}`) == null) {
       localStorage.setItem(`tradelog_audit_${clean}`, JSON.stringify([]));
     }
+    if (typeof localStorage !== 'undefined' && localStorage.getItem(`tradelog_strategies_${clean}`) == null) {
+      localStorage.setItem(`tradelog_strategies_${clean}`, JSON.stringify([]));
+    }
+    if (typeof localStorage !== 'undefined' && localStorage.getItem(`tradelog_strategyversions_${clean}`) == null) {
+      localStorage.setItem(`tradelog_strategyversions_${clean}`, JSON.stringify([]));
+    }
     // Best-effort profile creation under users/{uid}. A sync failure never
     // fails registration — local-first, the next push retries.
     try {

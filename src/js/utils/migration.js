@@ -11,6 +11,7 @@ const MIGRATION_VERSION_V6 = 6;
 const MIGRATION_VERSION_V7 = 7;
 const MIGRATION_VERSION_V8 = 8;
 const MIGRATION_VERSION_V9 = 9;
+const MIGRATION_VERSION_V10 = 10;
 
 // Storage key for the idempotency flag
 function flagKey(user) {
@@ -49,6 +50,10 @@ function flagKeyV9(user) {
   return `tradelog_migration_v9_${user}`;
 }
 
+function flagKeyV10(user) {
+  return `tradelog_migration_v10_${user}`;
+}
+
 // Local parse that never throws (avoids importing firebase via storage.js)
 function safeParse(raw, fallback) {
   try {
@@ -59,10 +64,10 @@ function safeParse(raw, fallback) {
   }
 }
 
-/** Returns 9 when v9 migrated, 8 when v8 migrated, down to 0 when never migrated */
+/** Returns 10 when v10 migrated, 9 when v9 migrated, down to 0 when never migrated */
 export function getMigrationVersion(user) {
   if (!user || typeof localStorage === 'undefined') return 0;
-  if (localStorage.getItem(flagKeyV9(user))) return MIGRATION_VERSION_V9;
+  if (localStorage.getItem(flagKeyV10(user))) return MIGRATION_VERSION_V10;
   if (localStorage.getItem(flagKeyV8(user))) return MIGRATION_VERSION_V8;
   if (localStorage.getItem(flagKeyV7(user))) return MIGRATION_VERSION_V7;
   if (localStorage.getItem(flagKeyV6(user))) return MIGRATION_VERSION_V6;
@@ -135,6 +140,9 @@ export function migrateUser(user) {
 
   const v9 = migrateAudit(user);
   if (v9.migrated) migrated = true;
+
+  const v10 = migrateStrategies(user);
+  if (v10.migrated) migrated = true;
 
   if (migrated) return { migrated: true, version: getMigrationVersion(user) };
   return { migrated: false, version: getMigrationVersion(user) };
@@ -307,4 +315,26 @@ export function migrateAudit(user) {
   }
   localStorage.setItem(flagKeyV9(user), String(MIGRATION_VERSION_V9));
   return { migrated: true, version: MIGRATION_VERSION_V9 };
+}
+
+/** v10 — ensure the versioned strategy stores exist (idempotent, never deletes data) */
+export function migrateStrategies(user) {
+  if (!user || typeof localStorage === 'undefined') return { migrated: false, version: 0 };
+  if (localStorage.getItem(flagKeyV10(user))) return { migrated: false, version: MIGRATION_VERSION_V10 };
+  const rawStrategies = localStorage.getItem(`tradelog_strategies_${user}`);
+  if (rawStrategies == null) {
+    localStorage.setItem(`tradelog_strategies_${user}`, JSON.stringify([]));
+  } else {
+    const parsed = safeParse(rawStrategies, []);
+    if (!Array.isArray(parsed)) localStorage.setItem(`tradelog_strategies_${user}`, JSON.stringify([]));
+  }
+  const rawVersions = localStorage.getItem(`tradelog_strategyversions_${user}`);
+  if (rawVersions == null) {
+    localStorage.setItem(`tradelog_strategyversions_${user}`, JSON.stringify([]));
+  } else {
+    const parsed = safeParse(rawVersions, []);
+    if (!Array.isArray(parsed)) localStorage.setItem(`tradelog_strategyversions_${user}`, JSON.stringify([]));
+  }
+  localStorage.setItem(flagKeyV10(user), String(MIGRATION_VERSION_V10));
+  return { migrated: true, version: MIGRATION_VERSION_V10 };
 }
