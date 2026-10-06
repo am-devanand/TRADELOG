@@ -29,7 +29,8 @@ Protected paths (all under `users/{uid}`, owner-only):
 | `users/{uid}/accounts/{accountId}` | `id` must match `accountId` |
 | `users/{uid}/accounts/{accountId}/journal/{entryId}` | own explicit rule — parent rule does NOT cascade; `id` must match `entryId` |
 | `users/{uid}/trades/{tradeId}` | `id` must match `tradeId` |
-| `users/{uid}/legacyTrades/{accountId}/{tradeId}` | see caveat in `firestore.rules` header — verify the app's real write path |
+| `users/{uid}/legacyTrades/{accountId}` | discovery marker doc; binds `accountId` field |
+| `users/{uid}/legacyTrades/{accountId}/entries/{tradeId}` | legacy TP/SL trades; needs its own match because a document cannot sit under a document |
 | `users/{uid}/rules/{ruleId}` | `id` must match `ruleId` |
 | `users/{uid}/setups/{setupId}` | `id` must match `setupId` |
 | `users/{uid}/reviews/{reviewId}` | `id` must match `reviewId` |
