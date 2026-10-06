@@ -31,6 +31,7 @@ import {
   showToast,
 } from '../utils/helpers.js';
 import { renderNavbar, bindNavbar } from '../components/navbar.js';
+import { bindSyncStatus, startAllSyncStatusWatchers } from '../components/syncStatus.js';
 
 function fmtBytes(n) {
   const bytes = Number(n);
@@ -324,6 +325,9 @@ export function renderSettings() {
         <section aria-label="Data">
           <div class="p8-lock-head" style="margin-bottom:8px;"><h2 class="p8-title">Data</h2></div>
           ${renderBackupManager({ stats })}
+          <div class="card" aria-label="Sync status" style="margin-top:8px;">
+            <div data-sync-status-root data-sync-compact="false"></div>
+          </div>
           <div class="p8-actions">
             <a class="btn btn-secondary" href="#/settings/integrity">INTEGRITY CHECK</a>
           </div>
@@ -344,6 +348,8 @@ export function renderSettings() {
     </div>`;
 
   bindNavbar();
+  bindSyncStatus();
+  startAllSyncStatusWatchers();
   bindBackupManager({
     onExport: (kind) => handleExport(user, kind),
     onRestoreFile: (parsed, mode) => handleRestore(user, parsed, mode),

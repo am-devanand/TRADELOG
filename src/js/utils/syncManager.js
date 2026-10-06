@@ -72,8 +72,26 @@ function resolveUsername(hint) {
   return '';
 }
 
+// Test seam, mirroring __setSyncAdapter. Production always resolves the uid
+// from the live Firebase Auth session; tests cannot provide one, so without
+// this the data-safety guarantees (additive reconcile, no destructive
+// overwrite, local preservation on failure) would be untestable.
+let _uidProvider = null;
+
+export function __setUidProvider(fn) {
+  _uidProvider = typeof fn === 'function' ? fn : null;
+}
+
+export function __clearUidProvider() {
+  _uidProvider = null;
+}
+
 function resolveUid() {
   try {
+    if (_uidProvider) {
+      const u = _uidProvider();
+      return u ? String(u) : null;
+    }
     const u = auth && auth.currentUser && auth.currentUser.uid;
     return u ? String(u) : null;
   } catch {

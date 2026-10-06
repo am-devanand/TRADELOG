@@ -1,5 +1,6 @@
 import { getCurrentUser, logoutUser, getTheme, setTheme } from '../utils/storage.js';
 import { navigate } from '../utils/helpers.js';
+import { bindSyncStatus, startSyncStatusWatcher } from './syncStatus.js';
 
 export function renderNavbar() {
   const user = getCurrentUser();
@@ -23,6 +24,7 @@ export function renderNavbar() {
           <input type="checkbox" id="theme-toggle" ${theme === 'light' ? 'checked' : ''}>
           <span class="toggle-slider"></span>
         </label>
+        <span data-sync-status-root data-sync-compact="true"></span>
         <button class="btn btn-ghost btn-sm" id="nav-risk-calc" title="Risk Calculator">🧮</button>
         <span style="color:var(--text-secondary);font-size:var(--font-size-sm)">👤 ${user}</span>
         <button class="btn btn-ghost btn-sm" id="nav-logout">Logout</button>
@@ -32,6 +34,15 @@ export function renderNavbar() {
 }
 
 export function bindNavbar() {
+  // Delegated + watcher binds are module-guarded: safe on every render.
+  bindSyncStatus();
+  document.querySelectorAll('[data-sync-status-root]').forEach((el) => {
+    try {
+      startSyncStatusWatcher(el, { compact: el.getAttribute('data-sync-compact') === 'true' });
+    } catch {
+      /* sync indicator must never break the navbar */
+    }
+  });
   document.getElementById('nav-logout')?.addEventListener('click', () => {
     logoutUser();
     navigate('/login');

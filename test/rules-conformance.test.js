@@ -6,6 +6,7 @@
 // re-checks ownership of the outer {uid} segment.
 
 import { readFileSync } from 'node:fs';
+import { test } from './helpers.js';
 
 const rulesSrc = readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8');
 const syncSrc = readFileSync(new URL('../src/js/utils/syncManager.js', import.meta.url), 'utf8');
@@ -14,45 +15,48 @@ const appPaths = collectAppPaths(syncSrc);
 const rules = parseRules(rulesSrc);
 
 let failed = 0;
-const fail = (m) => { console.log(`  x ${m}`); failed++; };
-const pass = (m) => console.log(`  . ${m}`);
+const problems = [];
+const fail = (m) => { problems.push(m); failed++; };
 
-console.log(`app document paths: ${appPaths.length}\n`);
+test('rules: every app write path has an exact ownership-gated match', () => {
+  if (appPaths.length === 0) throw new Error('no app paths parsed - parser is broken');
+  for (const { fn, segments } of appPaths) {
+    if (segments.length % 2 !== 0) {
+      throw new Error(`${fn}: "${segments.join('/')}" has an odd segment count, so it cannot address a document`);
+    }
+    const match = findCover(rules, segments);
+    if (!match) {
+      throw new Error(`${fn}: no rules match covers "${segments.join('/')}" - default-deny would block it`);
+    }
+    if (!match.gated) {
+      throw new Error(`${fn}: "${match.path}" is not gated on ownership`);
+    }
+  }
+});
 
-for (const { fn, segments } of appPaths) {
-  if (segments.length % 2 !== 0) {
-    fail(`${fn}: "${segments.join('/')}" has an odd segment count, so it cannot address a document`);
-    continue;
+test('rules: no recursive wildcard and no ungated grant', () => {
+  for (const r of rules) {
+    if (r.path.includes('**')) throw new Error(`recursive wildcard at "${r.path}" would leak sibling users`);
+    if (r.hasAllow && !r.gated) throw new Error(`rule "${r.path}" grants access but is not ownership-gated`);
   }
-  const match = findCover(rules, segments);
-  if (!match) {
-    fail(`${fn}: no rules match covers "${segments.join('/')}" - default-deny would block it`);
-    continue;
+});
+
+test('rules: authorization derives only from request.auth.uid', () => {
+  if (/request\.auth\.token/.test(rulesSrc) || /request\.resource\.data\.(email|username)/.test(rulesSrc)) {
+    throw new Error('rules derive authorization from a client-controlled claim or field');
   }
-  if (!match.gated) {
-    fail(`${fn}: "${match.path}" is not gated on ownership`);
-    continue;
+});
+
+export async function run() {
+  const helpers = await import('./helpers.js');
+  const result = await helpers.run();
+  if (result.passed) {
+    console.log(`  (app document paths checked: ${appPaths.length}; rules blocks: ${rules.length})`);
   }
-  pass(`${fn.padEnd(14)} -> ${match.path}${match.exact ? '' : '  (via parent match)'}`);
+  return result;
 }
 
-console.log('');
-for (const r of rules) {
-  if (r.path.includes('**')) fail(`recursive wildcard at "${r.path}" would leak sibling users`);
-  // Blocks without an allow deny by default, so only granted blocks need gating.
-  if (r.hasAllow && !r.gated) fail(`rule "${r.path}" grants access but is not ownership-gated`);
-}
-if (!rules.length) fail('no rules parsed - the parser is broken, so treat this run as a failure');
-else pass(`${rules.length} match blocks parsed, none recursive, all ownership-gated`);
 
-if (/request\.auth\.token/.test(rulesSrc) || /request\.resource\.data\.(email|username)/.test(rulesSrc)) {
-  fail('rules derive authorization from a client-controlled claim or field');
-} else {
-  pass('authorization derives only from request.auth.uid');
-}
-
-console.log(failed ? `\nFAILED (${failed})` : '\nOK - app paths and rules agree');
-process.exit(failed ? 1 : 0);
 
 // 'users', uid, 'accounts', String(accountId)  ->  ['users','{uid}','accounts','{accountId}']
 function collectAppPaths(src) {

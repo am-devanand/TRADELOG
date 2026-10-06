@@ -19,6 +19,7 @@ import {
   formatCurrency,
 } from '../utils/helpers.js';
 import { renderNavbar, bindNavbar } from '../components/navbar.js';
+import { bindSyncStatus, startAllSyncStatusWatchers } from '../components/syncStatus.js';
 
 function accountSelKey(user) {
   return `tradelog_command_account_${String(user || '').trim().toLowerCase()}`;
@@ -298,6 +299,9 @@ export function renderCommandCenter() {
         </div>
       </div>
       ${locked ? '<div class="card cc-locked-strip" role="alert"><span class="badge badge-sl">🔒 LOCKED — NEW TRADES BLOCKED</span><span class="p8-muted">Managing open trades and closing remain available.</span></div>' : ''}
+      <div class="card cc-section" aria-label="Sync status" data-cc="sync">
+        <div data-sync-status-root data-sync-compact="false"></div>
+      </div>
       <div class="cc-grid">
         ${propState && propState.success !== false ? propBannerHtml(propState, account.name || 'Account') : `
         <section class="card cc-prop" aria-label="Account prop status" data-cc="prop">
@@ -354,6 +358,8 @@ export function renderCommandCenter() {
     </div>`;
 
   bindNavbar();
+  bindSyncStatus();
+  startAllSyncStatusWatchers();
   document.getElementById('cc-account')?.addEventListener('change', (e) => {
     try {
       localStorage.setItem(accountSelKey(user), String(e.target.value));

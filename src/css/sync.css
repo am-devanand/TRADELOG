@@ -1,0 +1,111 @@
+/* ============================================
+   TRADELOG — Sync Status Indicator
+   Pill/badge styling reusing existing tokens only.
+   Status is always symbol + text, never colour alone.
+   ============================================ */
+
+/* Host roots (empty spans injected by pages) */
+[data-sync-status-root] {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
+/* Base pill: extends the .badge visual language */
+.sync-pill {
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.sync-pill .sync-symbol {
+  font-style: normal;
+  line-height: 1;
+}
+
+.sync-pill .sync-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Per-state treatment (symbol + text + tone, never colour alone) */
+.sync-pill.sync-ok {
+  background: var(--color-tp-bg);
+  color: var(--color-tp);
+  border: 1px solid var(--color-tp-border);
+}
+
+.sync-pill.sync-busy {
+  background: var(--accent-gold-dim);
+  color: var(--accent-gold);
+  border: 1px solid var(--border-color-hover);
+}
+
+.sync-pill.sync-offline {
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+  border: 1px solid var(--border-color-hover);
+}
+
+.sync-pill.sync-error {
+  background: var(--color-sl-bg);
+  color: var(--color-sl);
+  border: 1px solid var(--color-sl-border);
+}
+
+.sync-pill.sync-idle {
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+}
+
+/* Full variant: pill + meta + message + retry */
+.sync-full {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.sync-full .sync-meta {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.sync-full .sync-meta strong {
+  color: var(--text-primary);
+  font-weight: var(--font-weight-semibold);
+}
+
+.sync-full .sync-message {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  flex-basis: 100%;
+}
+
+/* Retry keeps the .btn look; 40px+ touch target */
+.sync-full .sync-retry {
+  min-height: 40px;
+  min-width: 40px;
+  padding: 10px 20px;
+}
+
+/* Narrow screens: keep the pill compact, let the message wrap */
+@media (max-width: 320px) {
+  .sync-pill .sync-text {
+    max-width: 120px;
+  }
+
+  .sync-full .sync-message {
+    flex-basis: 100%;
+  }
+}
+
+@media (max-width: 768px) {
+  .navbar-actions [data-sync-status-root] .sync-pill .sync-text {
+    max-width: 140px;
+  }
+}
