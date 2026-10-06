@@ -2,13 +2,13 @@
 // attributable to their run. The engine emits `runId` on every SIMULATED
 // trade; replayStore scopes by `trade.runId`; replayAnalytics reads the store.
 // Vanilla ESM, offline, fixed epoch-ms candles, no clock.
-import { test, ok, equal, assertThrows } from './helpers.js';
+import { test, ok, equal, deepEqual, assertThrows } from './helpers.js';
 
 const engine = await import('../src/js/utils/replayEngine.js');
 const store = await import('../src/js/utils/replayStore.js');
 const analytics = await import('../src/js/utils/replayAnalytics.js');
 
-const { runReplay } = engine;
+const { runReplay, evaluateBar } = engine;
 const { saveReplayRun, getReplayRun, saveSimulatedTrades, getSimulatedTrades } = store;
 const { getReplaySummary, getReplayStatsByDimension, getDeterminismDigest } = analytics;
 
@@ -162,6 +162,75 @@ test('integration: SL_HIT is negative rMultiple, TP_HIT positive', () => {
   equal(tpRun.entries.length, 1, 'TP-warranting run trades once');
   equal(tpRun.entries[0].closeReason, 'TP_HIT', 'TP exit reason');
   ok(tpRun.entries[0].rMultiple > 0, `TP gives positive rMultiple (${tpRun.entries[0].rMultiple})`);
+});
+
+test('integration: evaluateBar agrees with runReplay on every bar', () => {
+  // 40 fixed candles with one isolated spike at bar 20: flat base 100 with a
+  // single close at 102.5, then immediate reversion, so BREAKS_STRUCTURE(10)
+  // can only pass at bar 20 (every later window still contains its high).
+  const candles = [];
+  let price = 100;
+  for (let i = 0; i < 40; i += 1) {
+    const o = price;
+    const c = i === 20 ? 102.5 : r4(100 + ((i % 4) - 1.5) * 0.2);
+    candles.push({ t: T0 + i * HOUR, o: r4(o), h: r4(Math.max(o, c) + 0.15), l: r4(Math.min(o, c) - 0.15), c: r4(c), v: 1000 });
+    price = c;
+  }
+  const strategy = {
+    id: 'agree-v1', version: 1, symbol: 'EUR/USD', timeframe: 'H1', direction: 'LONG',
+    entryConditions: [{ id: 'e', type: 'BREAKS_STRUCTURE', params: { lookback: 10 } }],
+    stopLoss: { type: 'distance', value: 2 }, takeProfit: { type: 'distance', value: 4 },
+    maxHoldCandles: 6, riskPercent: 1,
+  };
+  const run = runReplay({ candles, strategy, rules: [], account: ACCOUNT, options: {} });
+  ok(run.entries.length > 0, `run produced entries (${run.entries.length})`);
+  const readyBars = [];
+  for (let i = 0; i < candles.length; i += 1) {
+    const g = evaluateBar({ candles, cursor: i, strategy, rules: [], account: ACCOUNT, riskPercent: 1 });
+    equal(g.blockedReason === '', g.canSimulate, `bar ${i}: blockedReason consistent with canSimulate`);
+    if (g.canSimulate) {
+      ok(g.verdict && g.verdict.state === 'READY', `bar ${i}: READY verdict present`);
+      readyBars.push(i);
+    }
+  }
+  // Default fill is next-open, so each entry's signal bar is entryIndex - 1.
+  const signalBars = run.entries.map((t) => t.entryIndex - 1).sort((a, b) => a - b);
+  deepEqual(readyBars, signalBars, 'canSimulate bars exactly equal runReplay signal bars');
+});
+
+test('integration: custom strategy thresholds gate both paths identically', () => {
+  // PRICE_ABOVE(101) passes on the upper segments; the optional rr-cap rule
+  // (RR <= 1 against replay RR 2) fails with weight 1 while required weight
+  // 1 + satisfied optional weight 9 pass: 10/11 = 90.9, READY by default but
+  // WAITING under ready:95. The failing check is optional, so no blocker.
+  const candles = buildCandles();
+  const rules = [
+    { id: 'opt-sat', name: 'Optional', type: 'CHECKBOX', category: 'GENERAL', weight: 9, required: false, enabled: true },
+    { id: 'rr-cap', name: 'RR cap', type: 'RR_LIMIT', category: 'RISK', weight: 1, required: false, enabled: true, validation: { operator: '<=', value: 1 } },
+  ];
+  const strict = {
+    id: 'agree-thr', version: 1, symbol: 'EUR/USD', timeframe: 'H1', direction: 'LONG',
+    entryConditions: [{ id: 'above', type: 'PRICE_ABOVE', params: { level: 101 } }],
+    thresholds: { ready: 95, waiting: 60 },
+    ruleRefs: ['opt-sat', 'rr-cap'],
+    stopLoss: { type: 'distance', value: 2 }, takeProfit: { type: 'distance', value: 4 },
+    maxHoldCandles: 6, riskPercent: 1,
+  };
+  const run = runReplay({ candles, strategy: strict, rules, account: ACCOUNT, options: {} });
+  equal(run.entries.length, 0, 'strict thresholds yield zero entries');
+  const readyBars = [];
+  for (let i = 0; i < candles.length; i += 1) {
+    const g = evaluateBar({ candles, cursor: i, strategy: strict, rules, account: ACCOUNT, riskPercent: 1 });
+    if (g.canSimulate) readyBars.push(i);
+  }
+  deepEqual(readyBars, [], 'no bar is simulatable under strict thresholds');
+  const probe = evaluateBar({ candles, cursor: 50, strategy: strict, rules, account: ACCOUNT, riskPercent: 1 });
+  equal(probe.verdict && probe.verdict.state, 'WAITING', 'passing bar verdict is WAITING, not READY');
+  ok(probe.blockedReason.includes('WAITING'), `blockedReason names the verdict (${probe.blockedReason})`);
+  const relaxed = runReplay({
+    candles, strategy: { ...strict, id: 'agree-relaxed', thresholds: undefined }, rules, account: ACCOUNT, options: {},
+  });
+  ok(relaxed.entries.length > 0, `default thresholds trade (${relaxed.entries.length})`);
 });
 
 export async function run() {

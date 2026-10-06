@@ -18,6 +18,8 @@ import { renderStrategyAnalytics, renderStrategyDetail } from './js/pages/strate
 import { renderProcessAnalytics } from './js/pages/processAnalytics.js';
 import { renderImprovements } from './js/pages/improvements.js';
 import { renderCommandCenter } from './js/pages/commandCenter.js';
+import { renderStrategies } from './js/pages/strategies.js';
+import { renderReplay, renderReplayDetail } from './js/pages/replay.js';
 import { renderSettings } from './js/pages/settings.js';
 import { renderIntegrityPage } from './js/pages/integrity.js';
 import { showToast } from './js/utils/helpers.js';
@@ -84,6 +86,12 @@ registerRoute('/analytics/strategies', authGuard(renderStrategyAnalytics));
 registerRoute('/analytics/strategies/:id', authGuard(renderStrategyDetail));
 registerRoute('/analytics/process', authGuard(renderProcessAnalytics));
 registerRoute('/analytics/improvements', authGuard(renderImprovements));
+registerRoute('/strategies', authGuard(renderStrategies));
+registerRoute('/replay', authGuard(renderReplay));
+// /replay/:runId — 2 segments like /trade/:id, but literal first segments
+// differ ('replay' vs 'trade') and the router matches per-pattern
+// (length + literal check), so no cross-capture.
+registerRoute('/replay/:runId', authGuard(renderReplayDetail));
 // /calendar — calendar agent owns ./js/pages/calendar.js; lazy dynamic import
 // with @vite-ignore keeps the build green when the file lands later.
 registerRoute('/calendar', authGuard((params) => {

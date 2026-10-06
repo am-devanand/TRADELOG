@@ -19,6 +19,8 @@ export function renderNavbar() {
         <a class="btn btn-ghost btn-sm" href="#/rules" id="nav-rules" title="My Trading Rules">📋 Rules</a>
         <a class="btn btn-ghost btn-sm" href="#/prop" id="nav-prop" title="Prop Dashboard">🛡 Prop</a>
         <a class="btn btn-ghost btn-sm" href="#/analytics" id="nav-analytics" title="Analytics">📊 Analytics</a>
+        <a class="btn btn-ghost btn-sm" href="#/strategies" id="nav-strategies" title="Strategies">♟ Strategies</a>
+        <a class="btn btn-ghost btn-sm" href="#/replay" id="nav-replay" title="Replay (simulation)">↺ Replay</a>
         <a class="btn btn-ghost btn-sm" href="#/settings" id="nav-settings" title="Settings">⚙ Settings</a>
         <label class="toggle" title="Toggle theme">
           <input type="checkbox" id="theme-toggle" ${theme === 'light' ? 'checked' : ''}>

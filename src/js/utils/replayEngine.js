@@ -1105,6 +1105,88 @@ function deriveRunId({ strategy, ruleVersions, firstT, lastT, count, startIndex,
   return `replay_${fnv1aHex(stableStringify(payload))}`;
 }
 
+// ---- Single-bar gate (single source of truth) ----
+// Canonical per-bar decision order: setup -> entry -> stops -> risk guards ->
+// checklist verdict. runReplay calls this for every bar; the replay cursor
+// panel calls it for display. One implementation, no parallel interpretation.
+export function evaluateBar({ candles, cursor, strategy, rules, account, riskPercent } = {}) {
+  const list = Array.isArray(candles) ? candles : [];
+  const s = strategy && typeof strategy === 'object' ? strategy : {};
+  const ruleList = Array.isArray(rules) ? rules : [];
+  const acct = account && typeof account === 'object' ? account : {};
+  const rawCursor = cursor;
+  const idx = Math.floor(Number(cursor));
+  const base = {
+    cursor: Number.isInteger(idx) ? idx : rawCursor,
+    setup: null,
+    direction: null,
+    entry: null,
+    stops: null,
+    guards: null,
+    checks: null,
+    verdict: null,
+    riskReward: null,
+    riskAmount: null,
+    canSimulate: false,
+    blockedReason: '',
+  };
+  const block = (reason) => ({ ...base, blockedReason: reason });
+  if (list.length === 0) return block('no candles to evaluate');
+  if (!Number.isInteger(idx) || idx < 0 || idx >= list.length || !isCandle(list[idx])) {
+    return block(`cursor ${String(rawCursor)} is outside evaluable candle range 0..${list.length - 1}`);
+  }
+  const setup = evaluateSetup({ candles: list, cursor: idx, strategy: s });
+  const dir = setup.direction;
+  if (!setup.pass) {
+    const firstFail = setup.checks.find((chk) => chk.pass !== true);
+    if (!firstFail) {
+      return { ...base, setup, direction: dir, blockedReason: `strategy defines no conditions to evaluate at index ${idx}` };
+    }
+    return { ...base, setup, direction: dir, blockedReason: `setup failed: ${firstFail.reason}` };
+  }
+  const entry = resolveEntry({ candles: list, cursor: idx, strategy: s, direction: dir });
+  if (!entry) {
+    return { ...base, setup, direction: dir, blockedReason: `no fill after setup at index ${idx}: insufficient candles after entry` };
+  }
+  const stops = resolveStops({ candle: list[idx], entry: entry.price, direction: dir, strategy: s });
+  if (!Number.isFinite(stops.stopLoss) || !Number.isFinite(stops.takeProfit)) {
+    return { ...base, setup, direction: dir, entry, blockedReason: `levels not resolvable for ${dir} entry ${entry.price} at index ${idx}` };
+  }
+  const balance = toFinite(acct.balance ?? acct.startingBalance, 0);
+  const rpRaw = Number(riskPercent);
+  const rp = Number.isFinite(rpRaw) && rpRaw >= 0 ? rpRaw : 0;
+  const riskAmount = calcRiskAmount(balance, rp);
+  const guards = checkRiskGuards({
+    balance, riskAmount, riskPercent: rp,
+    entry: entry.price, sl: stops.stopLoss, tp: stops.takeProfit, direction: dir,
+  });
+  if (!guards.safe) {
+    return { ...base, setup, direction: dir, entry, stops, guards, riskAmount, blockedReason: `risk guard: ${guards.blockers[0] ?? 'blocked'}` };
+  }
+  const riskReward = calcRR(entry.price, stops.stopLoss, stops.takeProfit, dir);
+  const context = {
+    candles: list, cursor: idx, direction: dir,
+    entryPrice: entry.price, stopLoss: stops.stopLoss, takeProfit: stops.takeProfit, riskReward,
+  };
+  const checks = buildChecks({ strategy: s, ruleRefs: undefined, rules: ruleList, context });
+  const checklistRules = buildChecklistRules({ strategy: s, ruleRefs: undefined, rules: ruleList, direction: dir });
+  const thresholds = s.thresholds && typeof s.thresholds === 'object' ? s.thresholds : undefined;
+  let verdict = null;
+  try {
+    verdict = evaluateChecklist(
+      thresholds === undefined
+        ? { rules: checklistRules, checks }
+        : { rules: checklistRules, checks, thresholds },
+    );
+  } catch (err) {
+    return { ...base, setup, direction: dir, entry, stops, guards, checks, riskReward, riskAmount, blockedReason: `checklist error: ${(err && err.message) || err}` };
+  }
+  if (verdict.state !== 'READY') {
+    return { ...base, setup, direction: dir, entry, stops, guards, checks, verdict, riskReward, riskAmount, blockedReason: `decision ${verdict.state} with score ${verdict.score} (READY required)` };
+  }
+  return { ...base, setup, direction: dir, entry, stops, guards, checks, verdict, riskReward, riskAmount, canSimulate: true, blockedReason: '' };
+}
+
 // ---- Main replay loop ----
 
 /**
@@ -1131,7 +1213,6 @@ export function runReplay({ candles, strategy, rules, account, options } = {}) {
   const symbol = String(s.symbol ?? s.pair ?? opts.symbol ?? acct.symbol ?? 'UNKNOWN');
   const timeframe = String(s.timeframe ?? opts.timeframe ?? 'UNKNOWN');
 
-  const balance = toFinite(acct.balance ?? acct.startingBalance, 0);
   const riskPercent = Number.isFinite(Number(opts.riskPercent))
     ? Number(opts.riskPercent)
     : Number.isFinite(Number(s.riskPercent))
@@ -1143,7 +1224,6 @@ export function runReplay({ candles, strategy, rules, account, options } = {}) {
     : Math.max(0, Math.floor(Number(maxTradesRaw)));
   const allowLong = opts.allowLong ?? s.allowLong ?? true;
   const allowShort = opts.allowShort ?? s.allowShort ?? true;
-  const thresholds = s.thresholds && typeof s.thresholds === 'object' ? s.thresholds : undefined;
 
   const startRaw = opts.startIndex ?? opts.initialCursor ?? 0;
   const endRaw = opts.endIndex ?? list.length - 1;
@@ -1181,60 +1261,37 @@ export function runReplay({ candles, strategy, rules, account, options } = {}) {
   let insufficientSkips = 0;
   let nonReadySkips = 0;
 
+  const allowLongOn = allowLong === true || (allowLong !== false && allowLong !== 'false');
+  const allowShortOn = allowShort === true || (allowShort !== false && allowShort !== 'false');
+
   if (list.length > 0 && barsProcessed > 0) {
     for (let cursor = startIndex; cursor <= endIndex && entries.length < maxTrades; cursor += 1) {
-      const setup = evaluateSetup({ candles: list, cursor, strategy: s });
-      if (!setup.pass) continue;
+      const gate = evaluateBar({ candles: list, cursor, strategy: s, rules: ruleList, account: acct, riskPercent });
+      if (!gate.setup || !gate.setup.pass) continue;
       setupsPassed += 1;
-      const dir = setup.direction;
-      if (dir === 'LONG' && !(allowLong === true || (allowLong !== false && allowLong !== 'false'))) continue;
-      if (dir === 'SHORT' && !(allowShort === true || (allowShort !== false && allowShort !== 'false'))) continue;
+      const dir = gate.direction;
+      if (dir === 'LONG' && !allowLongOn) continue;
+      if (dir === 'SHORT' && !allowShortOn) continue;
 
-      const entry = resolveEntry({ candles: list, cursor, strategy: s, direction: dir });
+      const entry = gate.entry;
       if (!entry) {
         insufficientSkips += 1;
         continue;
       }
-      const signalBar = list[cursor];
-      const stops = resolveStops({ candle: signalBar, entry: entry.price, direction: dir, strategy: s });
-      if (!Number.isFinite(stops.stopLoss) || !Number.isFinite(stops.takeProfit)) {
+      const stops = gate.stops;
+      if (!stops || !Number.isFinite(stops.stopLoss) || !Number.isFinite(stops.takeProfit)) {
         insufficientSkips += 1;
         continue;
       }
 
-      const riskAmount = calcRiskAmount(balance, riskPercent);
-      const guards = checkRiskGuards({
-        balance,
-        riskAmount,
-        riskPercent,
-        entry: entry.price,
-        sl: stops.stopLoss,
-        tp: stops.takeProfit,
-        direction: dir,
-      });
-      if (!guards.safe) {
+      const guards = gate.guards;
+      if (!guards || !guards.safe) {
         guardSkips += 1;
         continue;
       }
 
-      const riskReward = calcRR(entry.price, stops.stopLoss, stops.takeProfit, dir);
-      const context = {
-        candles: list,
-        cursor,
-        direction: dir,
-        entryPrice: entry.price,
-        stopLoss: stops.stopLoss,
-        takeProfit: stops.takeProfit,
-        riskReward,
-      };
-      const checks = buildChecks({ strategy: s, ruleRefs: undefined, rules: ruleList, context });
-      const checklistRules = buildChecklistRules({ strategy: s, ruleRefs: undefined, rules: ruleList, direction: dir });
-      const verdict = evaluateChecklist(
-        thresholds === undefined
-          ? { rules: checklistRules, checks }
-          : { rules: checklistRules, checks, thresholds },
-      );
-      if (verdict.state !== 'READY') {
+      const verdict = gate.verdict;
+      if (!gate.canSimulate || !verdict) {
         nonReadySkips += 1;
         continue;
       }
@@ -1319,6 +1376,7 @@ export function runReplay({ candles, strategy, rules, account, options } = {}) {
 
 export default {
   runReplay,
+  evaluateBar,
   evaluateSetup,
   buildChecks,
   buildChecklistRules,

@@ -1,0 +1,127 @@
+/* ============================================
+   Phase 9C — Strategies + Replay
+   Reuses existing CSS custom properties only. No new palette.
+   Touch targets >= 44px; single-column at 320px.
+   ============================================ */
+
+.p9-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--space-md);
+  margin-bottom: var(--space-xl);
+}
+
+.p9-templates { margin-bottom: var(--space-xl); }
+
+.p9-template-card h3,
+.p9-row-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.p9-muted { color: var(--text-secondary); font-size: var(--font-size-sm); }
+
+.p9-meta { color: var(--text-secondary); font-size: var(--font-size-sm); margin: var(--space-xs) 0; }
+
+.p9-actions {
+  display: flex;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  margin-top: var(--space-md);
+}
+
+.p9-actions .btn,
+[data-page-root="strategies"] .btn,
+[data-page-root="replay"] .btn,
+[data-page-root="replay-detail"] .btn {
+  min-height: 44px;
+}
+
+[data-page-root="strategies"] input,
+[data-page-root="strategies"] select,
+[data-page-root="strategies"] textarea,
+[data-page-root="replay"] input,
+[data-page-root="replay"] select,
+[data-page-root="replay"] textarea,
+[data-page-root="replay-detail"] select {
+  min-height: 44px;
+}
+
+.p9-cond-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr auto;
+  gap: var(--space-sm);
+  align-items: end;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm);
+  margin-bottom: var(--space-sm);
+}
+
+.p9-cond-row .form-group { margin-bottom: 0; }
+
+.p9-cond-remove { min-height: 44px; min-width: 44px; }
+
+/* Simulation markers — unmistakable, existing tokens only */
+.p9-sim-banner {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+  flex-wrap: wrap;
+  background: var(--accent-gold-dim);
+  border: 1px solid var(--accent-gold-glow);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  margin-bottom: var(--space-lg);
+  font-size: var(--font-size-sm);
+}
+
+.p9-cursor-bar {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin: var(--space-md) 0;
+}
+
+.p9-cursor-pos { font-weight: var(--font-weight-semibold); font-size: var(--font-size-sm); }
+
+.p9-checks {
+  list-style: none;
+  padding: 0;
+  margin: var(--space-sm) 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: var(--font-size-sm);
+}
+
+.p9-checks li {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 8px 10px;
+}
+
+[data-page-root="replay"] h2,
+[data-page-root="replay"] h3,
+[data-page-root="strategies"] h2,
+[data-page-root="strategies"] h3,
+[data-page-root="replay-detail"] h3 {
+  margin: var(--space-lg) 0 var(--space-sm);
+}
+
+[data-page-root="replay"] section.card,
+[data-page-root="strategies"] section.card,
+[data-page-root="replay-detail"] section.card {
+  margin-bottom: var(--space-lg);
+}
+
+@media (max-width: 640px) {
+  .p9-cond-row { grid-template-columns: 1fr; }
+  .p9-grid { grid-template-columns: 1fr; }
+}
