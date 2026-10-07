@@ -12,6 +12,7 @@ const {
   INSIGHT_SOURCES,
   INSIGHT_CATEGORIES,
   INSIGHT_STATES,
+  TRACEABILITY_LEVELS,
   normalizeImprovementPattern,
   normalizeDegradationInsight,
   normalizeAttributionInsight,
@@ -371,6 +372,112 @@ test('structural: no second copy of the analytics thresholds', () => {
   const code = stripComments(readFileSync(CODE, 'utf8'));
   deepEqual(code.match(/minimumSample\s*:\s*\d+/g) || [], [], 'thresholds come from models.js');
 });
+
+
+// ---------- traceability ----------
+
+test('traceability: levels are the controlled set the spec requires', () => {
+  deepEqual(TRACEABILITY_LEVELS, ['record', 'aggregate', 'pattern']);
+});
+
+test('traceability: degradation cites real records, so it is record-level', () => {
+  const rows = series({ prefix: 'tr', count: 20, earlyWins: 9, lateWins: 1, strategyId: 'S' });
+  const n = normalizeDegradationInsight(degradation.detectDegradation(rows, { dimension: 'strategy' })[0]);
+  equal(n.traceability, 'record');
+  equal(n.hasRecordEvidence, true);
+  const refs = n.evidence[0].sourceRefs;
+  ok(refs.length >= 20, `expected the full window cited, got ${refs.length}`);
+  equal(n.evidence[0].scope, 'records');
+  for (const r of refs) ok(typeof r === 'string' && r.length > 0);
+});
+
+test('traceability: attribution is aggregate-level and cites no record ids', () => {
+  const n = normalizeAttributionInsight(attribution.qualifyAttributionRows(
+    [attributionRow({ value: 'AAA', sampleSize: 30, averageR: 1.2 })], { dimension: 'pair' },
+  )[0]);
+  equal(n.traceability, 'aggregate');
+  equal(n.hasRecordEvidence, false);
+  deepEqual(n.evidence[0].sourceRefs, []);
+  equal(n.evidence[0].scope, 'aggregate');
+});
+
+test('traceability: improvement patterns are pattern-level and cite no record ids', () => {
+  const n = normalizeImprovementPattern(improvement.getImprovementPatterns({ reviews: reviewsFixture() })[0]);
+  equal(n.traceability, 'pattern');
+  equal(n.hasRecordEvidence, false);
+  deepEqual(n.evidence[0].sourceRefs, []);
+  equal(n.evidence[0].scope, 'pattern');
+});
+
+test('traceability: no insight claims record-level evidence without real refs', () => {
+  for (const i of consolidated()) {
+    for (const e of i.evidence) {
+      const hasRefs = Array.isArray(e.sourceRefs) && e.sourceRefs.length > 0;
+      if (e.traceability === 'record') ok(hasRefs, `${i.id} record-level without refs is impossible`);
+      if (!hasRefs) ok(e.traceability !== 'record', `${i.id} must not claim record traceability`);
+      ok(TRACEABILITY_LEVELS.includes(e.traceability));
+    }
+    equal(i.hasRecordEvidence, i.evidence.some((e) => Array.isArray(e.sourceRefs) && e.sourceRefs.length > 0),
+      `${i.id} flag agrees with its evidence`);
+  }
+});
+
+test('traceability: all three producers are represented across levels', () => {
+  const levels = new Set(consolidated().map((i) => i.traceability));
+  ok(levels.has('record'), 'degradation contributes record-level');
+  ok(levels.has('aggregate'), 'attribution contributes aggregate-level');
+  ok(levels.has('pattern'), 'improvements contribute pattern-level');
+});
+
+// ---------- WATCH reachability ----------
+
+test('watch: a deterministic fixture reaches WATCH under default thresholds', () => {
+  // 40-trade strategy: historical 32W/8L, recent 31W/9L, uniform +/-2R.
+  // Win rate moves -3.1% (STABLE) and profit factor -13.9%, which sits
+  // inside the default 5%-15% watch band, so the worst verdict is WATCH.
+  const rows = [];
+  for (let i = 0; i < 40; i++) rows.push(tradeRow({ id: `wh-${i}`, strategyId: 'S-WATCH', outcome: i < 32 ? 'WIN' : 'LOSS' }));
+  for (let i = 0; i < 40; i++) rows.push(tradeRow({ id: `wr-${i}`, strategyId: 'S-WATCH', outcome: i < 31 ? 'WIN' : 'LOSS' }));
+
+  const out = degradation.detectDegradation(rows, { dimension: 'strategy' });
+  equal(out.length, 1);
+  equal(out[0].metric.state, 'WATCH');
+  ok(out[0].rankable === false || out[0].rankable === true, 'ranking verdict still present');
+
+  const n = normalizeDegradationInsight(out[0]);
+  equal(n.state, 'WATCH');
+  equal(n.traceability, 'record');
+  deepEqual(contracts.findCausalClaims(n.whySurfaced, n.summary, n.title), [], 'stays observational');
+  ok(n.investigationQuestion.length > 0, 'a WATCH insight still carries an investigation question');
+});
+
+test('watch: WATCH survives consolidation and is grouped into its own bucket', () => {
+  const rows = [];
+  for (let i = 0; i < 40; i++) rows.push(tradeRow({ id: `wh-${i}`, strategyId: 'S-WATCH', outcome: i < 32 ? 'WIN' : 'LOSS' }));
+  for (let i = 0; i < 40; i++) rows.push(tradeRow({ id: `wr-${i}`, strategyId: 'S-WATCH', outcome: i < 31 ? 'WIN' : 'LOSS' }));
+  const out = degradation.detectDegradation(rows, { dimension: 'strategy' });
+  const merged = consolidateInsights({ degradation: out, attribution: [], improvements: [] });
+  equal(merged.filter((i) => i.state === 'WATCH').length, 1);
+  equal(groupInsights(merged).groups.WATCH.length, 1, 'reachable in the view');
+});
+
+test('watch: the fixture is deterministic across repeated runs', () => {
+  const build = () => {
+    const rows = [];
+    for (let i = 0; i < 40; i++) rows.push(tradeRow({ id: `wh-${i}`, strategyId: 'S-WATCH', outcome: i < 32 ? 'WIN' : 'LOSS' }));
+    for (let i = 0; i < 40; i++) rows.push(tradeRow({ id: `wr-${i}`, strategyId: 'S-WATCH', outcome: i < 31 ? 'WIN' : 'LOSS' }));
+    return consolidationOf(rows);
+  };
+  equal(JSON.stringify(build()), JSON.stringify(build()));
+});
+
+function consolidationOf(rows) {
+  return consolidateInsights({
+    degradation: degradation.detectDegradation(rows, { dimension: 'strategy' }),
+    attribution: [],
+    improvements: [],
+  });
+}
 
 export async function run() {
   const h = await import('./helpers.js');

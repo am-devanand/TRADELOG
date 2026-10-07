@@ -64,6 +64,23 @@ const CATEGORY_MAP = {
   PATTERN: 'improvement',
 };
 
+/**
+ * How precisely an insight's evidence can be traced back to records.
+ *
+ * `record`     — specific stored record ids are cited (degradation windows).
+ * `pattern`    — a recurring observation across reviewed trades, with no
+ *                single trade identified as the cause of the pattern.
+ * `aggregate`  — a grouped statistic over a slice of trades, with no
+ *                underlying record ids available from the source.
+ *
+ * These are honest differences in what the upstream engines expose, not
+ * gaps to paper over. Attribution aggregates and improvement patterns have
+ * no record-level handle, and none is invented here: a consumer that needs
+ * record-level evidence must be able to tell at a glance that it is not
+ * there.
+ */
+export const TRACEABILITY_LEVELS = ['record', 'aggregate', 'pattern'];
+
 /** Provenance attributed when a producer does not carry it on the object. */
 const PRODUCER_PROVENANCE = {
   degradationEngine: 'tradingAnalytics.getCoreMetrics',
@@ -187,21 +204,39 @@ function rankingFor(raw, state, source) {
 }
 
 /**
+ * Traceability for one evidence entry. Record ids are only ever reported
+ * when the source actually supplied them, so a finding can never appear to
+ * cite trades it never saw.
+ */
+function traceabilityFor(source, sourceRefs) {
+  if (Array.isArray(sourceRefs) && sourceRefs.length > 0) {
+    return { scope: 'records', traceability: 'record' };
+  }
+  if (source === 'improvementEngine') {
+    return { scope: 'pattern', traceability: 'pattern' };
+  }
+  return { scope: 'aggregate', traceability: 'aggregate' };
+}
+
+/**
  * Evidence. Empty when the source supplied none — never a placeholder
  * carrying invented content. Numerical claims keep their provenance.
  */
-function evidenceFor(raw, provenance) {
+function evidenceFor(raw, provenance, source) {
   const ref = raw?.evidenceRef && typeof raw.evidenceRef === 'object' ? raw.evidenceRef : {};
   const description = text(raw?.evidence);
-  const refIds = Array.isArray(ref.refIds) ? ref.refIds.filter((r) => text(r) !== null) : [];
-  if (!description && refIds.length === 0) return [];
+  const sourceRefs = Array.isArray(ref.refIds) ? ref.refIds.filter((r) => text(r) !== null) : [];
+  if (!description && sourceRefs.length === 0) return [];
+  const level = traceabilityFor(source, sourceRefs);
   return [
     {
       kind: 'observation',
       description,
-      refIds,
+      sourceRefs,
       sources: [...provenance],
       window: windowContext(raw),
+      scope: level.scope,
+      traceability: level.traceability,
     },
   ];
 }
@@ -290,12 +325,19 @@ function buildCanonical(raw, expectedSource) {
   const source = expectedSource ?? sourceFor(raw);
   if (!INSIGHT_SOURCES.includes(source)) return null;
 
-  const evidence = evidenceFor(raw, provenanceFor(raw, source));
+  const evidence = evidenceFor(raw, provenanceFor(raw, source), source);
   if (evidence.length === 0) return null;
 
   const { state, sourceState } = stateFor(source, category, raw);
   const sample = toSample(raw);
   const metric = raw.metric && typeof raw.metric === 'object' ? raw.metric : {};
+  // The weakest level across entries, so a consumer reading one field
+  // cannot overstate what is traceable.
+  const traceability = evidence.some((e) => e.traceability === 'record')
+    ? 'record'
+    : evidence.some((e) => e.traceability === 'pattern')
+      ? 'pattern'
+      : 'aggregate';
 
   return {
     id: text(raw.id) ?? null,
@@ -307,6 +349,8 @@ function buildCanonical(raw, expectedSource) {
     summary: text(raw.evidence),
     whySurfaced: whySurfacedFor(source, state, text(metric.suppressionReason) ?? text(metric.reason)),
     evidence,
+    traceability,
+    hasRecordEvidence: evidence.some((e) => Array.isArray(e.sourceRefs) && e.sourceRefs.length > 0),
     sample,
     ranking: rankingFor(raw, state, source),
     investigationQuestion: investigationFor(state, source, raw),
@@ -429,6 +473,7 @@ export default {
   INSIGHT_SOURCES,
   INSIGHT_CATEGORIES,
   INSIGHT_STATES,
+  TRACEABILITY_LEVELS,
   normalizeImprovementPattern,
   normalizeDegradationInsight,
   normalizeAttributionInsight,

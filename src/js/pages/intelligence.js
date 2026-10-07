@@ -77,14 +77,20 @@ function sampleBlock(sample) {
   return `${band} · ${size === null ? 'size unavailable' : `${size} record(s)`}`;
 }
 
+const TRACEABILITY_NOTE = {
+  record: 'Traced to individual stored records.',
+  pattern: 'Recurring observation across reviewed trades. No single trade is identified.',
+  aggregate: 'Grouped statistic over a slice of trades. The source exposes no individual records.',
+};
+
 function evidenceBlock(insight) {
   const items = (insight.evidence || []).map((entry) => {
     const parts = [];
     if (entry.description) parts.push(`<div class="int-ev-text">${escapeHtml(entry.description)}</div>`);
     parts.push(`<div class="int-ref">${
-      Array.isArray(entry.refIds) && entry.refIds.length
-        ? escapeHtml(`${entry.refIds.length} source record(s) referenced`)
-        : 'Aggregate slice — no single record cited'
+      Array.isArray(entry.sourceRefs) && entry.sourceRefs.length
+        ? escapeHtml(`${entry.sourceRefs.length} source record(s) referenced`)
+        : escapeHtml(TRACEABILITY_NOTE[entry.traceability] ?? 'Traceability not recorded')
     }</div>`);
     if (entry.window) parts.push(`<div class="int-ref">Window ${escapeHtml(entry.window)}</div>`);
     return `<li class="int-evidence-item">${parts.join('')}</li>`;
@@ -116,6 +122,7 @@ function insightCard(insight) {
       <div class="int-meta">
         <span class="badge badge-gold">${escapeHtml(sourceLabel)}</span>
         <span class="badge badge-gold">${escapeHtml(humanize(insight.category))}</span>
+        <span class="badge badge-gold">${escapeHtml(`${humanize(insight.traceability)} evidence`)}</span>
       </div>
       <dl class="int-questions">
         <dt>What happened</dt>
