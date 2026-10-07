@@ -17,6 +17,7 @@ import { renderProp } from './js/pages/prop.js';
 import { renderStrategyAnalytics, renderStrategyDetail } from './js/pages/strategyAnalytics.js';
 import { renderProcessAnalytics } from './js/pages/processAnalytics.js';
 import { renderImprovements } from './js/pages/improvements.js';
+import { renderIntelligence } from './js/pages/intelligence.js';
 import { renderCommandCenter } from './js/pages/commandCenter.js';
 import { renderStrategies } from './js/pages/strategies.js';
 import { renderReplay, renderReplayDetail } from './js/pages/replay.js';
@@ -86,6 +87,9 @@ registerRoute('/analytics/strategies', authGuard(renderStrategyAnalytics));
 registerRoute('/analytics/strategies/:id', authGuard(renderStrategyDetail));
 registerRoute('/analytics/process', authGuard(renderProcessAnalytics));
 registerRoute('/analytics/improvements', authGuard(renderImprovements));
+// /analytics/intelligence — Phase 10D consolidated insight view. Reads the
+// existing analytics layers only; computes nothing of its own.
+registerRoute('/analytics/intelligence', authGuard(renderIntelligence));
 registerRoute('/strategies', authGuard(renderStrategies));
 registerRoute('/replay', authGuard(renderReplay));
 // /replay/:runId — 2 segments like /trade/:id, but literal first segments

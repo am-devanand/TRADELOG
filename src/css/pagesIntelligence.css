@@ -1,0 +1,64 @@
+/* ============================================
+   Intelligence page (Phase 10D)
+   Presentation only. Layout stays readable from 320px up, and every
+   section collapses to a single column on narrow viewports.
+   ============================================ */
+
+.int-summary { margin-bottom:var(--space-md); }
+.int-summary p { margin:0; }
+
+.int-filters { margin-bottom:var(--space-lg); }
+.int-filter-row { display:grid; grid-template-columns:1fr 1fr; gap:var(--space-md); }
+.int-filter-row .form-group { display:flex; flex-direction:column; gap:6px; }
+.int-filter-row select { width:100%; }
+
+.int-section { margin-bottom:var(--space-xl); }
+.int-section-title {
+  font-size:var(--font-size-lg); font-weight:var(--font-weight-bold);
+  margin:0 0 var(--space-md);
+}
+.int-count {
+  display:inline-block; margin-left:6px; padding:1px 8px; border-radius:999px;
+  background:var(--bg-card); border:1px solid var(--border-color);
+  font-size:var(--font-size-xs); color:var(--text-secondary);
+}
+.int-empty { color:var(--text-secondary); margin:0; }
+.int-filtered { color:var(--text-secondary); font-size:var(--font-size-xs); margin:8px 0 0; }
+
+.int-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:var(--space-md); }
+.int-card { display:flex; flex-direction:column; gap:var(--space-sm); }
+.int-card-head { display:flex; align-items:flex-start; justify-content:space-between; gap:var(--space-sm); }
+.int-card-title { font-size:var(--font-size-base); margin:0; }
+.int-meta { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+
+.int-questions { margin:0; display:grid; grid-template-columns:auto 1fr; gap:6px var(--space-sm); }
+.int-questions dt {
+  font-size:var(--font-size-xs); text-transform:uppercase; letter-spacing:0.04em;
+  color:var(--text-secondary); white-space:nowrap; padding-top:2px;
+}
+.int-questions dd { margin:0; font-size:var(--font-size-sm); overflow-wrap:anywhere; }
+
+.int-evidence { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; }
+.int-evidence-item {
+  border-left:3px solid var(--border-color); padding-left:var(--space-sm);
+}
+.int-ref, .int-prov { font-size:var(--font-size-xs); color:var(--text-secondary); margin-top:2px; }
+
+.int-ranking { font-size:var(--font-size-xs); font-weight:var(--font-weight-medium); }
+.int-ranking-ok { color:var(--success-color, var(--text-primary)); }
+.int-ranking-suppressed { color:var(--text-secondary); }
+
+.int-footnote { color:var(--text-secondary); font-size:var(--font-size-xs); margin-top:var(--space-lg); }
+
+@media (max-width:768px) {
+  .int-filter-row { grid-template-columns:1fr; }
+  .int-grid { grid-template-columns:1fr; }
+  .int-questions { grid-template-columns:1fr; gap:2px; }
+  .int-questions dd { margin-bottom:8px; }
+  .int-card-head { flex-direction:column; gap:6px; }
+}
+
+@media (max-width:420px) {
+  .int-grid { grid-template-columns:minmax(0, 1fr); }
+  .int-questions dt { padding-top:0; }
+}
