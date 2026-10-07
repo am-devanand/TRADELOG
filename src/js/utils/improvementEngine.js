@@ -13,20 +13,7 @@
 // - REVIEW PROMPTS only — never trading instructions
 //   (no buy/sell/avoid/take language).
 // ============================================
-// Local threshold constant mirroring the pending ANALYTICS_THRESHOLDS
-// export in models.js (parallel owner). models.js has no such export
-// at build time, and a static import of a missing export breaks the
-// module at link time — so this file carries the same key names and
-// values locally instead of importing. Once models.js lands the
-// export, swap this block for:
-//   import { ANALYTICS_THRESHOLDS } from './models.js';
-const ANALYTICS_THRESHOLDS = {
-  minimumSample: 5,
-  repeatedPatternCount: 3,
-  lowProcessScore: 60,
-  highProcessScore: 80,
-  lowRuleAdherence: 75,
-};
+import { ANALYTICS_THRESHOLDS } from './models.js';
 
 const THRESHOLDS = { ...ANALYTICS_THRESHOLDS };
 

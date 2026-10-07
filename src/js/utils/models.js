@@ -625,6 +625,7 @@ export const ANALYTICS_THRESHOLDS = {
   repeatedPatternCount: 3,
   highProcessScore: 80,
   lowProcessScore: 60,
+  lowRuleAdherence: 75,
 };
 
 export const PROCESS_QUALITY_THRESHOLD = 80;
