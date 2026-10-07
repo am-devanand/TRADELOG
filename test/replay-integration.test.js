@@ -9,7 +9,7 @@ const store = await import('../src/js/utils/replayStore.js');
 const analytics = await import('../src/js/utils/replayAnalytics.js');
 
 const { runReplay, evaluateBar } = engine;
-const { saveReplayRun, getReplayRun, saveSimulatedTrades, getSimulatedTrades } = store;
+const { saveReplayRun, getReplayRun, resolveRunAccount, saveSimulatedTrades, getSimulatedTrades, deleteSimulatedTrades } = store;
 const { getReplaySummary, getReplayStatsByDimension, getDeterminismDigest } = analytics;
 
 const USER = 'replay-integration';
@@ -231,6 +231,74 @@ test('integration: custom strategy thresholds gate both paths identically', () =
     candles, strategy: { ...strict, id: 'agree-relaxed', thresholds: undefined }, rules, account: ACCOUNT, options: {},
   });
   ok(relaxed.entries.length > 0, `default thresholds trade (${relaxed.entries.length})`);
+});
+
+test('integration: re-run from the persisted record reproduces digest and money', () => {
+  const candles = buildCandles();
+  const strategy = breakoutStrategy();
+  const account = { balance: 5000, startingBalance: 5000, currency: 'USD' };
+  const options = { riskPercent: 1 };
+  const run1 = runReplay({ candles, strategy, rules: [], account, options });
+  ok(run1.entries.length > 0, `run produced entries (${run1.entries.length})`);
+  for (const t of run1.entries) {
+    ok(t.riskAmount > 0, `${t.id} riskAmount positive (${t.riskAmount})`);
+  }
+  // Persist exactly the way the page does at RUN time: account snapshot plus
+  // the options the re-run will reuse.
+  saveReplayRun(USER, {
+    id: run1.runId, strategyId: run1.strategyId, strategyVersion: run1.strategyVersion,
+    ruleVersions: run1.ruleVersions, symbol: run1.symbol, timeframe: run1.timeframe,
+    candleRange: { from: candles[0].t, to: candles[candles.length - 1].t },
+    barCount: run1.barsProcessed,
+    account: { accountId: 'acc-1', balance: 5000, startingBalance: 5000, currency: 'USD' },
+    options, summary: run1.summary, entryCount: run1.entries.length, status: 'COMPLETED',
+  });
+  saveSimulatedTrades(USER, run1.entries);
+  const digest1 = getDeterminismDigest(USER, run1.runId);
+  // Re-run using ONLY the persisted record — no live form state.
+  const stored = getReplayRun(USER, run1.runId);
+  const resolved = resolveRunAccount(stored);
+  equal(resolved.ok, true, 'persisted account resolves');
+  const storedOpts = stored.options && typeof stored.options === 'object' ? stored.options : {};
+  const run2 = runReplay({
+    candles, strategy, rules: [],
+    account: { ...resolved.account, symbol: stored.symbol },
+    options: { ...storedOpts, runId: stored.id },
+  });
+  equal(run2.entries.length, run1.entries.length, 're-run produces the same entry count');
+  deleteSimulatedTrades(USER, stored.id);
+  saveSimulatedTrades(USER, run2.entries);
+  saveReplayRun(USER, { ...stored, summary: run2.summary, entryCount: run2.entries.length });
+  const digest2 = getDeterminismDigest(USER, stored.id);
+  equal(digest1, digest2, `digest identical on first re-run (${digest1})`);
+  const byId = new Map(run1.entries.map((t) => [t.id, t]));
+  for (const t of run2.entries) {
+    const first = byId.get(t.id);
+    ok(first !== undefined, `${t.id} present in both runs`);
+    equal(t.riskAmount, first.riskAmount, `${t.id} riskAmount identical (${t.riskAmount})`);
+    equal(t.positionSize, first.positionSize, `${t.id} positionSize identical (${t.positionSize})`);
+    equal(t.pnl, first.pnl, `${t.id} pnl identical (${t.pnl})`);
+    ok(t.riskAmount > 0, `${t.id} riskAmount still positive after re-run`);
+  }
+});
+
+test('integration: run without an account snapshot fails explicitly, never silent 0', () => {
+  const candles = buildCandles();
+  const run = runReplay({ candles, strategy: breakoutStrategy(), rules: [], account: ACCOUNT, options: {} });
+  ok(run.entries.length > 0, 'run produced entries');
+  saveReplayRun(USER, {
+    id: `${run.runId}-noacct`, strategyId: run.strategyId, strategyVersion: run.strategyVersion,
+    ruleVersions: run.ruleVersions, symbol: run.symbol, timeframe: run.timeframe,
+    candleRange: { from: candles[0].t, to: candles[candles.length - 1].t },
+    barCount: run.barsProcessed, options: {}, summary: run.summary,
+    entryCount: run.entries.length, status: 'COMPLETED',
+  });
+  const stored = getReplayRun(USER, `${run.runId}-noacct`);
+  equal(stored.account, null, 'legacy run normalizes to null account, not 0');
+  const resolved = resolveRunAccount(stored);
+  equal(resolved.ok, false, 'resolution fails explicitly');
+  ok(typeof resolved.error === 'string' && resolved.error.length > 0, `explicit error surfaced (${resolved.error})`);
+  ok(!JSON.stringify(resolved).includes('"balance":0'), 'no silent zero balance anywhere');
 });
 
 export async function run() {

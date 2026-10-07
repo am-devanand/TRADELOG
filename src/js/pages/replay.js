@@ -31,6 +31,7 @@ import {
 import {
   getReplayRuns,
   getReplayRun,
+  resolveRunAccount,
   saveReplayRun,
   deleteReplayRun,
   getSimulatedTrades,
@@ -522,6 +523,12 @@ function runReplayFromWorkspace(user) {
       id: result.runId, strategyId: inp.strategyId, strategyVersion: result.strategyVersion,
       ruleVersions: result.ruleVersions, symbol: result.symbol, timeframe: result.timeframe,
       candleRange: { from, to }, barCount: candles.length,
+      account: {
+        accountId: inp.acct ? String(inp.acct.id ?? '') : '',
+        balance: accountBalance(inp.acct),
+        startingBalance: Number.isFinite(Number(inp.acct?.startingBalance)) ? Number(inp.acct.startingBalance) : null,
+        currency: inp.acct?.currency ?? '',
+      },
       options: { symbol: inp.symbol, timeframe: inp.timeframe, riskPercent: inp.riskPercent, startIndex: 0, endIndex: candles.length - 1, maxTrades: inp.maxTrades },
       summary: result.summary, entryCount: result.entries.length, status: 'COMPLETED',
     });
@@ -737,7 +744,9 @@ function rerunIdentical(user, runId) {
   let rules = [];
   try { rules = getRules(user) || []; } catch { rules = []; }
   const opts = run.options && typeof run.options === 'object' ? run.options : {};
-  const account = { balance: 0, symbol: run.symbol };
+  const resolved = resolveRunAccount(run);
+  if (!resolved.ok) return showToast(resolved.error, 'error');
+  const account = { ...resolved.account, symbol: run.symbol };
   let result;
   try {
     result = runReplay({

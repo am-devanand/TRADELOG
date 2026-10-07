@@ -62,6 +62,25 @@ function normalizeCandleRange(raw) {
   return { from: src.from ?? '', to: src.to ?? '' };
 }
 
+// Account snapshot captured at RUN time so RE-RUN can reproduce the original
+// balances exactly. Old runs without it normalize to null (never a silent 0).
+function normalizeAccountSnapshot(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const hasId = raw.accountId !== undefined && raw.accountId !== null && String(raw.accountId) !== '';
+  const bal = Number(raw.balance);
+  const start = Number(raw.startingBalance);
+  const hasBal = Number.isFinite(bal);
+  const hasStart = Number.isFinite(start);
+  const hasCur = raw.currency !== undefined && raw.currency !== null && String(raw.currency) !== '';
+  if (!hasId && !hasBal && !hasStart && !hasCur) return null;
+  return {
+    accountId: hasId ? String(raw.accountId) : '',
+    balance: hasBal ? bal : null,
+    startingBalance: hasStart ? start : null,
+    currency: hasCur ? String(raw.currency) : '',
+  };
+}
+
 function normalizeRun(raw, user) {
   const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
   const now = new Date().toISOString();
@@ -77,6 +96,7 @@ function normalizeRun(raw, user) {
     timeframe: src.timeframe ?? '',
     candleRange: normalizeCandleRange(src.candleRange),
     barCount: toFinite(src.barCount, 0),
+    account: normalizeAccountSnapshot(src.account),
     options: src.options && typeof src.options === 'object' ? deepCopy(src.options) : {},
     summary: src.summary === undefined ? null : deepCopy(src.summary),
     entryCount: toFinite(src.entryCount ?? src.entries, 0),
@@ -141,6 +161,35 @@ export function getReplayRun(user, runId) {
   const clean = normalizeUser(user);
   const found = readRunsRaw(clean).find((r) => r && String(r.id) === String(runId));
   return found ? normalizeRun(found, clean) : undefined;
+}
+
+// Resolve the account a RE-RUN must execute with, sourced ONLY from the
+// persisted run record. Never falls back to 0: a run without a usable
+// balance is an explicit error, not a silent recomputation.
+export function resolveRunAccount(run) {
+  const snap = run && typeof run === 'object' && run.account && typeof run.account === 'object' ? run.account : null;
+  if (!snap) {
+    return { ok: false, error: 'Saved run has no account snapshot — re-run needs the original balance. Run again from the workspace.' };
+  }
+  const bal = Number(snap.balance);
+  if (Number.isFinite(bal)) {
+    const account = { balance: bal };
+    const start = Number(snap.startingBalance);
+    if (Number.isFinite(start)) account.startingBalance = start;
+    if (snap.currency !== undefined && snap.currency !== null && String(snap.currency) !== '') {
+      account.currency = String(snap.currency);
+    }
+    return { ok: true, account };
+  }
+  const start = Number(snap.startingBalance);
+  if (Number.isFinite(start)) {
+    const account = { balance: start, startingBalance: start };
+    if (snap.currency !== undefined && snap.currency !== null && String(snap.currency) !== '') {
+      account.currency = String(snap.currency);
+    }
+    return { ok: true, account };
+  }
+  return { ok: false, error: 'Saved run account has no usable balance — re-run needs the original balance. Run again from the workspace.' };
 }
 
 export function saveReplayRun(user, run) {
@@ -287,6 +336,7 @@ export function deleteSimulatedTrades(user, runId) {
 export default {
   getReplayRuns,
   getReplayRun,
+  resolveRunAccount,
   saveReplayRun,
   updateReplayRun,
   deleteReplayRun,
