@@ -25,8 +25,10 @@ import {
 import {
   runReplay,
   evaluateBar,
+  normalizeCandles,
   resolveExit,
   simulateTrade,
+  cursorNavState,
 } from '../utils/replayEngine.js';
 import {
   getReplayRuns,
@@ -65,6 +67,7 @@ let detailBound = false;
 // Workspace state (session-scoped; candles also persisted per run for re-run).
 let candles = [];
 let candleErrors = [];
+let candleNotices = [];
 let candleSource = '';
 let cursor = 0;
 let lastResult = null;
@@ -244,13 +247,16 @@ function decisionPanelHtml(user) {
   const score = Number(verdict.score);
   const passed = Array.isArray(verdict.passedRules) ? verdict.passedRules : [];
   const failed = Array.isArray(verdict.failedRules) ? verdict.failedRules : [];
+  const nav = cursorNavState(cursor, candles.length);
   const riskShown = v.entry && v.stops ? fmtN(v.riskAmount) : '—';
   const rrShown = v.riskReward != null && Number.isFinite(v.riskReward) ? fmtN(v.riskReward) : '—';
   return `
     <div class="p9-cursor-bar" role="group" aria-label="Replay cursor">
-      <button type="button" class="btn btn-secondary" data-action="cursor-prev" aria-label="Previous candle">◀ PREV</button>
+      <button type="button" class="btn btn-secondary" data-action="cursor-prev" aria-label="Previous candle"
+        ${nav.canPrev ? '' : 'disabled aria-disabled="true" title="Already at the first candle"'}>◀ PREV</button>
       <span class="p9-cursor-pos" aria-live="polite">Candle ${escapeHtml(String(cursor + 1))} / ${escapeHtml(String(candles.length))}</span>
-      <button type="button" class="btn btn-secondary" data-action="cursor-next" aria-label="Next candle">NEXT CANDLE ▶</button>
+      <button type="button" class="btn btn-secondary" data-action="cursor-next" aria-label="Next candle"
+        ${nav.canNext ? '' : 'disabled aria-disabled="true" title="Already at the last candle"'}>NEXT CANDLE ▶</button>
     </div>
     <section class="card" aria-label="Engine decision at cursor" aria-live="polite">
       <div class="p9-row-head">
@@ -393,13 +399,37 @@ export function renderReplay() {
   drawResultChart();
 }
 
+// Single choke point for every candle series entering the workspace: rows
+// are normalised (ascending timestamp, duplicate timestamps de-duplicated
+// last-wins) before anything consumes them, and the user is told what changed
+// instead of silently losing rows or replaying out of order.
+function acceptCandleSeries(raw, source) {
+  const list = Array.isArray(raw) ? raw : [];
+  const ordered = list.every((c, i) => i === 0 || Number(list[i - 1]?.t) <= Number(c?.t));
+  candles = normalizeCandles(list);
+  candleSource = source;
+  candleNotices = [];
+  const dropped = list.length - candles.length;
+  if (dropped > 0) {
+    candleNotices.push(`${dropped} duplicate timestamp row(s) dropped — last occurrence kept.`);
+  }
+  if (!ordered && list.length > 0) {
+    candleNotices.push('Rows were not chronological — sorted oldest-first before replay.');
+  }
+  cursor = 0;
+  lastResult = null;
+  lastRunMeta = null;
+}
+
 function candleStatusHtml() {
   if (!candles.length && !candleErrors.length) {
     return `<div class="empty-state" role="status"><h3>No candles loaded</h3><p>Import a CSV or load the sample series.</p></div>`;
   }
   const errs = candleErrors.slice(0, 10).map((e) => `<li>${escapeHtml(e)}</li>`).join('');
+  const notes = candleNotices.map((n) => `<p class="p9-meta">${escapeHtml(n)}</p>`).join('');
   return `
     <p class="p9-meta">${escapeHtml(String(candles.length))} candles loaded from ${escapeHtml(candleSource || 'unknown source')}.</p>
+    ${notes}
     ${candleErrors.length ? `<p class="p9-meta">${escapeHtml(String(candleErrors.length))} row error(s):</p><ul class="p9-checks">${errs}</ul>${candleErrors.length > 10 ? `<p class="p9-muted">…and ${escapeHtml(String(candleErrors.length - 10))} more.</p>` : ''}` : ''}`;
 }
 
@@ -429,12 +459,8 @@ function bindWorkspaceOnce() {
     if (!btn || btn.disabled) return;
     const action = btn.getAttribute('data-action');
     if (action === 'load-sample') {
-      candles = buildSampleSeries();
+      acceptCandleSeries(buildSampleSeries(), 'sample generator (deterministic, seed 42)');
       candleErrors = [];
-      candleSource = 'sample generator (deterministic, seed 42)';
-      cursor = 0;
-      lastResult = null;
-      lastRunMeta = null;
       showToast(`Sample series loaded — ${candles.length} simulated candles`, 'info');
       refreshWorkspacePanels(user);
     } else if (action === 'cursor-prev') {
@@ -462,15 +488,13 @@ function bindWorkspaceOnce() {
         header: true, skipEmptyLines: true,
         complete: (results) => {
           const { good, errors } = parseCandlesCsv(results.data || []);
-          candles = good;
+          acceptCandleSeries(good, `CSV ${file.name}`);
           candleErrors = errors;
-          candleSource = `CSV ${file.name}`;
           cursor = 0;
-          lastResult = null;
-          lastRunMeta = null;
           e.target.value = '';
-          if (!good.length) showToast('No valid candle rows in CSV', 'error');
-          else showToast(`${good.length} candles loaded${errors.length ? `, ${errors.length} row(s) skipped` : ''}`, errors.length ? 'info' : 'success');
+          const notes = candleNotices.length ? ` (${candleNotices.join(' ')})` : '';
+          if (!candles.length) showToast('No valid candle rows in CSV', 'error');
+          else showToast(`${candles.length} candles loaded${errors.length ? `, ${errors.length} row(s) skipped` : ''}${notes}`, (errors.length || candleNotices.length) ? 'info' : 'success');
           refreshWorkspacePanels(user);
         },
         error: () => showToast('Could not parse CSV', 'error'),

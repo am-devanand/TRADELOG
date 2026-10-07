@@ -160,6 +160,33 @@ function fmt(n) {
   return String(round5(n));
 }
 
+// Defensive candle normalisation: ascending by timestamp (stable), with
+// duplicate timestamps de-duplicated last-wins. The engine forward-walks
+// bars, so unordered input would read future bars as past (look-ahead bias).
+// Duplicate policy is last-wins: a later row is treated as a correction of
+// the earlier row at the same timestamp. Determinism matters more than the
+// choice — the comparator is a total order (timestamp, then input position),
+// so equal inputs always normalise identically. Rows without a finite
+// timestamp can never evaluate; they are parked at the end, stably, instead
+// of being silently dropped (dropping would renumber every later bar).
+// Already-ascending input with unique finite timestamps passes through with
+// identical order and identical row references.
+export function normalizeCandles(candles) {
+  const input = Array.isArray(candles) ? candles : [];
+  const lastByTime = new Map();
+  const timeless = [];
+  for (let i = 0; i < input.length; i += 1) {
+    const row = input[i];
+    const t = Number(row && row.t);
+    if (Number.isFinite(t)) lastByTime.set(t, { row, i });
+    else timeless.push({ row, i });
+  }
+  const ordered = [...lastByTime.entries()].map(([t, kept]) => ({ t, row: kept.row, i: kept.i }));
+  for (const kept of timeless) ordered.push({ t: Infinity, row: kept.row, i: kept.i });
+  ordered.sort((a, b) => (a.t - b.t) || (a.i - b.i));
+  return ordered.map((entry) => entry.row);
+}
+
 // ---- Strategy condition evaluation (pure readout of candle window) ----
 
 // Canonical Phase 9A contract (models.js STRATEGY_CONDITION_TYPES) carries
@@ -1110,7 +1137,7 @@ function deriveRunId({ strategy, ruleVersions, firstT, lastT, count, startIndex,
 // checklist verdict. runReplay calls this for every bar; the replay cursor
 // panel calls it for display. One implementation, no parallel interpretation.
 export function evaluateBar({ candles, cursor, strategy, rules, account, riskPercent } = {}) {
-  const list = Array.isArray(candles) ? candles : [];
+  const list = normalizeCandles(candles);
   const s = strategy && typeof strategy === 'object' ? strategy : {};
   const ruleList = Array.isArray(rules) ? rules : [];
   const acct = account && typeof account === 'object' ? account : {};
@@ -1193,6 +1220,8 @@ export function evaluateBar({ candles, cursor, strategy, rules, account, riskPer
  * Deterministic historical replay over candles. Never writes anywhere;
  * every emitted entry has status 'SIMULATED' and required a READY verdict
  * from evaluateChecklist. Identical inputs yield byte-identical output.
+ * Input bars are normalised (ascending timestamp, last-wins dedupe) so
+ * unordered input can never introduce look-ahead bias.
  */
 export function runReplay({ candles, strategy, rules, account, options } = {}) {
   if (strategy !== undefined && (strategy === null || typeof strategy !== 'object' || Array.isArray(strategy))) {
@@ -1201,7 +1230,7 @@ export function runReplay({ candles, strategy, rules, account, options } = {}) {
   if (account !== undefined && (account === null || typeof account !== 'object' || Array.isArray(account))) {
     throw new TypeError('account must be an object');
   }
-  const list = Array.isArray(candles) ? candles : [];
+  const list = normalizeCandles(candles);
   const s = strategy && typeof strategy === 'object' ? strategy : {};
   const ruleList = Array.isArray(rules) ? rules : [];
   const acct = account && typeof account === 'object' ? account : {};
@@ -1377,6 +1406,7 @@ export function runReplay({ candles, strategy, rules, account, options } = {}) {
 export default {
   runReplay,
   evaluateBar,
+  normalizeCandles,
   evaluateSetup,
   buildChecks,
   buildChecklistRules,
@@ -1387,3 +1417,14 @@ export default {
   describeRuleVersions,
   REPLAY_EXIT_REASONS,
 };
+
+/**
+ * Navigation bounds for the replay cursor over a candle series.
+ * Pure so the boundary rule is unit-testable and cannot drift from the UI.
+ */
+export function cursorNavState(cursorIndex, total) {
+  const n = Number.isFinite(Number(total)) ? Math.max(0, Math.floor(Number(total))) : 0;
+  const i = Number.isFinite(Number(cursorIndex)) ? Math.floor(Number(cursorIndex)) : 0;
+  if (n === 0) return { canPrev: false, canNext: false };
+  return { canPrev: i > 0, canNext: i < n - 1 };
+}

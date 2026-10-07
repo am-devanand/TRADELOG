@@ -8,7 +8,7 @@ const engine = await import('../src/js/utils/replayEngine.js');
 const store = await import('../src/js/utils/replayStore.js');
 const analytics = await import('../src/js/utils/replayAnalytics.js');
 
-const { runReplay, evaluateBar } = engine;
+const { runReplay, evaluateBar, normalizeCandles } = engine;
 const { saveReplayRun, getReplayRun, resolveRunAccount, saveSimulatedTrades, getSimulatedTrades, deleteSimulatedTrades } = store;
 const { getReplaySummary, getReplayStatsByDimension, getDeterminismDigest } = analytics;
 
@@ -301,7 +301,86 @@ test('integration: run without an account snapshot fails explicitly, never silen
   ok(!JSON.stringify(resolved).includes('"balance":0'), 'no silent zero balance anywhere');
 });
 
+test('integration: reversed input produces results identical to ascending input', () => {
+  const ascending = buildCandles();
+  const reversed = [...ascending].reverse();
+  const strategy = breakoutStrategy();
+  const asc = runReplay({ candles: ascending, strategy, rules: [], account: ACCOUNT, options: {} });
+  const rev = runReplay({ candles: reversed, strategy, rules: [], account: ACCOUNT, options: {} });
+  ok(asc.entries.length > 0, `ascending run trades (${asc.entries.length})`);
+  deepEqual(rev, asc, 'reversed input yields byte-identical run (no look-ahead bias)');
+  // Engine layer, bypassing any UI: positional evaluation matches too.
+  for (const k of [0, 10, 24, 50, 95]) {
+    const a = evaluateBar({ candles: ascending, cursor: k, strategy, rules: [], account: ACCOUNT, riskPercent: 1 });
+    const b = evaluateBar({ candles: reversed, cursor: k, strategy, rules: [], account: ACCOUNT, riskPercent: 1 });
+    deepEqual(b, a, `evaluateBar at position ${k} matches on reversed input`);
+  }
+});
+
+test('integration: duplicate timestamps de-duplicate deterministically (last-wins)', () => {
+  const ascending = buildCandles();
+  // Repeat the first 10 bars with corrected closes, appended out of order.
+  const corrected = ascending.slice(0, 10).map((c) => ({ ...c, c: r4(c.c + 0.5), h: r4(c.h + 0.5) }));
+  const withDupes = [...ascending, ...corrected];
+  const normalized = normalizeCandles(withDupes);
+  equal(normalized.length, ascending.length, 'duplicates removed, count matches clean series');
+  for (let i = 0; i < 10; i += 1) {
+    equal(normalized[i].c, corrected[i].c, `timestamp ${normalized[i].t} keeps the last occurrence`);
+  }
+  for (let i = 1; i < normalized.length; i += 1) {
+    ok(normalized[i - 1].t <= normalized[i].t, 'normalised series is ascending');
+  }
+  const strategy = breakoutStrategy();
+  const dupes = runReplay({ candles: withDupes, strategy, rules: [], account: ACCOUNT, options: {} });
+  const clean = runReplay({ candles: normalizeCandles(ascending), strategy, rules: [], account: ACCOUNT, options: {} });
+  deepEqual(dupes.entries, clean.entries, 'duplicated input matches the de-duplicated ascending run');
+  equal(dupes.barsProcessed, ascending.length, 'barsProcessed reflects de-duplicated bars');
+});
+
+test('integration: normalised candleRange always runs from <= to', () => {
+  const ascending = buildCandles();
+  const normalized = normalizeCandles([...ascending].reverse());
+  ok(normalized[0].t <= normalized[normalized.length - 1].t, 'from <= to after normalisation');
+  const run = runReplay({ candles: [...ascending].reverse(), strategy: breakoutStrategy(), rules: [], account: ACCOUNT, options: {} });
+  saveReplayRun(USER, {
+    id: run.runId, strategyId: run.strategyId, strategyVersion: run.strategyVersion,
+    ruleVersions: run.ruleVersions, symbol: run.symbol, timeframe: run.timeframe,
+    candleRange: { from: normalized[0].t, to: normalized[normalized.length - 1].t },
+    barCount: run.barsProcessed, options: {}, summary: run.summary,
+    entryCount: run.entries.length, status: 'COMPLETED',
+  });
+  const stored = getReplayRun(USER, run.runId);
+  ok(stored.candleRange.from <= stored.candleRange.to, `persisted range ordered (${stored.candleRange.from} <= ${stored.candleRange.to})`);
+});
+
 export async function run() {
   const helpers = await import('./helpers.js');
   return helpers.run();
 }
+
+import { cursorNavState } from '../src/js/utils/replayEngine.js';
+
+test('cursorNavState: PREV disabled on first bar, NEXT enabled', () => {
+  deepEqual(cursorNavState(0, 120), { canPrev: false, canNext: true });
+});
+
+test('cursorNavState: NEXT disabled on last bar, PREV enabled', () => {
+  deepEqual(cursorNavState(119, 120), { canPrev: true, canNext: false });
+});
+
+test('cursorNavState: single-candle series disables both directions', () => {
+  deepEqual(cursorNavState(0, 1), { canPrev: false, canNext: false });
+});
+
+test('cursorNavState: empty series disables both directions', () => {
+  deepEqual(cursorNavState(0, 0), { canPrev: false, canNext: false });
+});
+
+test('cursorNavState: interior bar enables both directions', () => {
+  deepEqual(cursorNavState(60, 120), { canPrev: true, canNext: true });
+});
+
+test('cursorNavState: non-finite input degrades to disabled, never throws', () => {
+  deepEqual(cursorNavState(NaN, 120), { canPrev: false, canNext: true });
+  deepEqual(cursorNavState(0, NaN), { canPrev: false, canNext: false });
+});

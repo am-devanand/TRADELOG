@@ -155,9 +155,12 @@ select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmln
   backdrop-filter:blur(var(--glass-blur)); border-bottom:1px solid var(--glass-border);
   position:sticky; top:0; z-index:var(--z-sticky);
 }
-.navbar-brand { display:flex; align-items:center; gap:10px; font-size:var(--font-size-lg); font-weight:var(--font-weight-bold); }
+.navbar-brand { display:flex; align-items:center; gap:10px; font-size:var(--font-size-lg); font-weight:var(--font-weight-bold); flex:0 0 auto; min-height:40px; }
 .navbar-brand svg { width:28px; height:28px; }
-.navbar-actions { display:flex; align-items:center; gap:var(--space-sm); }
+/* The action row grows as routes are added, so it must be allowed to wrap and
+   shrink rather than pushing the document wider than the viewport. */
+.navbar-actions { display:flex; align-items:center; gap:var(--space-sm); flex-wrap:wrap; justify-content:flex-end; min-width:0; }
+.navbar-actions > * { flex:0 0 auto; }
 
 /* Stats Grid */
 .stats-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px,1fr)); gap:var(--space-md); margin-bottom:var(--space-xl); }
@@ -296,7 +299,10 @@ tbody tr:hover { background:var(--bg-card-hover); }
 /* Responsive */
 @media (max-width:768px) {
   .page { padding:var(--space-md); }
-  .navbar { padding:10px var(--space-md); }
+  .navbar { padding:10px var(--space-md); flex-wrap:wrap; row-gap:8px; }
+  .navbar-brand { font-size:var(--font-size-base); }
+  .navbar-actions { width:100%; justify-content:flex-start; gap:6px; }
+  .navbar-actions .btn { padding:8px 10px; font-size:var(--font-size-xs); min-height:40px; }
   .page-title { font-size:var(--font-size-xl); }
   .folder-grid { grid-template-columns:1fr; }
   .stats-grid { grid-template-columns:repeat(2,1fr); }
@@ -308,3 +314,11 @@ tbody tr:hover { background:var(--bg-card-hover); }
   .filters-bar .form-group { width:100%; }
   .modal { width:95%; padding:var(--space-lg); }
 }
+
+/* Hard floor: the document must never be wider than the viewport. Every route's
+   navbar shares this bar, so a regression here breaks mobile on every page. */
+@media (max-width:420px) {
+  .navbar-actions .btn { padding:8px; font-size:0.7rem; }
+  .navbar-actions { gap:4px; }
+}
+html, body { max-width:100%; overflow-x:hidden; }
