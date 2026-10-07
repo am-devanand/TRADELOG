@@ -8,9 +8,16 @@
 .int-summary p { margin:0; }
 
 .int-filters { margin-bottom:var(--space-lg); }
-.int-filter-row { display:grid; grid-template-columns:1fr 1fr; gap:var(--space-md); }
+.int-filter-row { display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:var(--space-md); }
 .int-filter-row .form-group { display:flex; flex-direction:column; gap:6px; }
-.int-filter-row select { width:100%; }
+.int-filter-row select { width:100%; min-height:40px; }
+.int-clear { min-height:40px; margin-top:var(--space-md); }
+.int-note {
+  color:var(--text-secondary); font-size:var(--font-size-sm);
+  margin:0 0 var(--space-md); padding-left:var(--space-sm);
+  border-left:3px solid var(--border-color);
+}
+.int-ev-text { margin-bottom:4px; }
 
 .int-section { margin-bottom:var(--space-xl); }
 .int-section-title {

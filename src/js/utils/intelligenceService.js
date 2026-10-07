@@ -2,20 +2,20 @@
 // Intelligence assembly — reads and delegates only.
 // Vanilla ESM, offline-first. No side effects on import.
 //
-// Phase 10D loader. intelligenceLayer.js stays pure by living here
-// instead: this module is the only place that touches storage, and its
-// whole job is to hand the three producers their inputs and pass their
-// output to the consolidator.
+// Phase 10D loader. intelligenceConsolidation.js stays pure by living here
+// instead: this is the only module that touches storage, and its whole job
+// is to hand the three producers their inputs and pass their output to the
+// consolidator.
 //
-// It computes no metrics. Every number reaches the UI because
-// tradingAnalytics or performanceAttribution produced it, and every
-// sufficiency verdict was already made by intelligenceContracts.
+// It computes no metrics. Every number reaching the UI was produced by
+// tradingAnalytics or performanceAttribution, and every sufficiency
+// verdict was already made by intelligenceContracts.
 import { getTradeDataset } from './tradingAnalytics.js';
 import { getImprovementPatterns } from './improvementEngine.js';
 import { getCompletedReviews } from './tradeReviews.js';
 import { detectDegradation } from './degradationEngine.js';
 import { qualifyAttribution } from './attributionIntelligence.js';
-import { consolidateIntelligence, groupByState } from './intelligenceLayer.js';
+import { consolidateInsights, groupInsights } from './intelligenceConsolidation.js';
 
 /**
  * Assemble the consolidated intelligence view.
@@ -23,11 +23,11 @@ import { consolidateIntelligence, groupByState } from './intelligenceLayer.js';
  * @param {string} accountId
  * @param {object} options — { user, filters, dimension, attributionDimension,
  *   dataset, reviews, attribution, degradationConfig }
- *   Pre-supplied dataset/reviews/attribution exist so callers and tests can
- *   inject data instead of seeding storage.
- * @returns {Array<object>} normalized insights, deterministically ordered.
+ *   Pre-supplied dataset/reviews/attribution let callers and tests inject
+ *   data instead of seeding storage.
+ * @returns {Array<object>} canonical insights, deterministically ordered.
  */
-export function buildIntelligence(accountId, options = {}) {
+export function buildConsolidatedInsights(accountId, options = {}) {
   const filters = options.filters && typeof options.filters === 'object' ? options.filters : {};
   const dimension = options.dimension || 'strategy';
   const attributionDimension = options.attributionDimension || 'all';
@@ -64,13 +64,13 @@ export function buildIntelligence(accountId, options = {}) {
     improvements = [];
   }
 
-  return consolidateIntelligence({ degradation, attribution, improvements });
+  return consolidateInsights({ improvements, degradation, attribution });
 }
 
 /** Convenience: the same view already bucketed for rendering. */
-export function buildIntelligenceGroups(accountId, options = {}) {
-  const insights = buildIntelligence(accountId, options);
-  return { insights, groups: groupByState(insights) };
+export function buildConsolidatedInsightGroups(accountId, options = {}) {
+  const insights = buildConsolidatedInsights(accountId, options);
+  return { insights, ...groupInsights(insights) };
 }
 
-export default { buildIntelligence, buildIntelligenceGroups };
+export default { buildConsolidatedInsights, buildConsolidatedInsightGroups };
