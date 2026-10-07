@@ -105,6 +105,15 @@ export function getAttributionDimensions() {
 }
 
 /**
+ * Resolve one trade's bucket for a dimension. Exported so other layers
+ * (degradation intelligence) group by the same mapping instead of
+ * reimplementing it. Unknown dimensions yield 'Unspecified'.
+ */
+export function getDimensionValue(trade, dimension) {
+  return dimensionValueFor(trade, dimension);
+}
+
+/**
  * Attribution breakdown for one dimension. Only values actually present
  * in the filtered dataset appear; rows sort alphabetically by value.
  */
