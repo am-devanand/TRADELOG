@@ -391,6 +391,37 @@ export function findUnsupportedStateClaims(textValue, citedInsights) {
 }
 
 /**
+ * Machine-readable rejection reasons.
+ *
+ * Every rejection carries one of these alongside its human message, so
+ * provider-quality telemetry can be aggregated without parsing prose. These
+ * codes describe how a response failed the contract; they say nothing about
+ * trading performance and must never be aggregated into trading analytics.
+ */
+export const VIOLATION_CODES = {
+  MISSING_FACT_ID: 'MISSING_FACT_ID',
+  UNKNOWN_FACT_ID: 'UNKNOWN_FACT_ID',
+  UNKNOWN_INSIGHT_ID: 'UNKNOWN_INSIGHT_ID',
+  WRONG_METRIC: 'WRONG_METRIC',
+  WRONG_SIGN: 'WRONG_SIGN',
+  UNAUTHORIZED_NUMBER: 'UNAUTHORIZED_NUMBER',
+  CAUSAL_CLAIM: 'CAUSAL_CLAIM',
+  TRADING_INSTRUCTION: 'TRADING_INSTRUCTION',
+  STATE_CLAIM: 'STATE_CLAIM',
+  TRACEABILITY_UPGRADE: 'TRACEABILITY_UPGRADE',
+  UNKNOWN_TRACEABILITY: 'UNKNOWN_TRACEABILITY',
+  UNKNOWN_SECTION: 'UNKNOWN_SECTION',
+  MALFORMED_RESPONSE: 'MALFORMED_RESPONSE',
+  OUTPUT_LIMIT: 'OUTPUT_LIMIT',
+  ADAPTER_FAULT: 'ADAPTER_FAULT',
+};
+
+/** One violation: a stable code plus the message a human reads. */
+export function violation(code, message) {
+  return { code, message };
+}
+
+/**
  * The whitelisted package handed to a provider.
  *
  * Read-only by construction: canonical insights are passed through as-is so
@@ -439,21 +470,21 @@ function validateGroundedItems(items, label, insightsById, registry, cfg, violat
   const out = [];
   if (items == null) return out;
   if (!Array.isArray(items)) {
-    violations.push(`${label} must be an array`);
+    violations.push(violation(VIOLATION_CODES.MALFORMED_RESPONSE, `${label} must be an array`));
     return out;
   }
   if (items.length > cfg.maxOutputItems) {
-    violations.push(`${label} exceeds maxOutputItems (${items.length} > ${cfg.maxOutputItems})`);
+    violations.push(violation(VIOLATION_CODES.OUTPUT_LIMIT, `${label} exceeds maxOutputItems (${items.length} > ${cfg.maxOutputItems})`));
   }
   for (const raw of items) {
     const item = typeof raw === 'string' ? { text: raw } : raw;
     if (!item || typeof item !== 'object') {
-      violations.push(`${label} contains a non-object entry`);
+      violations.push(violation(VIOLATION_CODES.MALFORMED_RESPONSE, `${label} contains a non-object entry`));
       continue;
     }
     const body = text(item.text);
     if (!body) {
-      violations.push(`${label} entry is missing text`);
+      violations.push(violation(VIOLATION_CODES.MALFORMED_RESPONSE, `${label} entry is missing text`));
       continue;
     }
 
@@ -466,39 +497,40 @@ function validateGroundedItems(items, label, insightsById, registry, cfg, violat
     // that cites a PATTERN insight may not claim record-level grounding.
     const claimed = text(item.groundedOn);
     if (claimed !== null && !TRACEABILITY_LEVELS.includes(claimed)) {
-      violations.push(`${label} entry has unknown groundedOn "${claimed}"`);
+      violations.push(violation(VIOLATION_CODES.UNKNOWN_TRACEABILITY, `${label} entry has unknown groundedOn "${claimed}"`));
       continue;
     }
     const weakest = weakestTraceability(cited);
     if (claimed !== null && weakest !== null && levelStrength(claimed) < levelStrength(weakest)) {
-      violations.push(
+      violations.push(violation(
+        VIOLATION_CODES.TRACEABILITY_UPGRADE,
         `${label} entry claims ${claimed} grounding but cites ${weakest}-level evidence`,
-      );
+      ));
       continue;
     }
     // Record-level reasoning requires real record evidence on every citation.
     if (claimed === 'record' && cited.some((i) => i.hasRecordEvidence !== true)) {
-      violations.push(`${label} entry claims record grounding without record-level evidence`);
+      violations.push(violation(VIOLATION_CODES.TRACEABILITY_UPGRADE, `${label} entry claims record grounding without record-level evidence`));
       continue;
     }
     if (cited.length === 0) {
-      violations.push(`${label} entry cites no known insight`);
+      violations.push(violation(VIOLATION_CODES.UNKNOWN_INSIGHT_ID, `${label} entry cites no known insight`));
       continue;
     }
 
     const causal = findCausalClaims(body);
     if (causal.length > 0) {
-      violations.push(`${label} entry asserts causation (${causal.join(', ')})`);
+      violations.push(violation(VIOLATION_CODES.CAUSAL_CLAIM, `${label} entry asserts causation (${causal.join(', ')})`));
       continue;
     }
     const instructions = findInstructionPhrases(body);
     if (instructions.length > 0) {
-      violations.push(`${label} entry contains a trading instruction (${instructions.join(', ')})`);
+      violations.push(violation(VIOLATION_CODES.TRADING_INSTRUCTION, `${label} entry contains a trading instruction (${instructions.join(', ')})`));
       continue;
     }
     const unsupportedStates = findUnsupportedStateClaims(body, cited);
     if (unsupportedStates.length > 0) {
-      violations.push(`${label} entry restates a state no cited insight supports (${unsupportedStates.join(', ')})`);
+      violations.push(violation(VIOLATION_CODES.STATE_CLAIM, `${label} entry restates a state no cited insight supports (${unsupportedStates.join(', ')})`));
       continue;
     }
     // Numbers must be traceable to the facts this entry cites, not merely to
@@ -514,13 +546,18 @@ function validateGroundedItems(items, label, insightsById, registry, cfg, violat
     const tokens = String(body).match(/(?<![A-Za-z])-?\d+(?:\.\d+)?/g) || [];
     if (tokens.length > 0) {
       if (citedFacts.length === 0) {
-        violations.push(`${label} entry states a figure without citing an authorised fact`);
+        violations.push(violation(
+          citedFactIds.length === 0
+            ? VIOLATION_CODES.MISSING_FACT_ID
+            : VIOLATION_CODES.UNKNOWN_FACT_ID,
+          `${label} entry states a figure without citing an authorised fact`,
+        ));
         continue;
       }
       const covered = new Set(citedFacts.flatMap((f) => f.permittedForms || []));
       const unattributed = tokens.filter((t) => !covered.has(t));
       if (unattributed.length > 0) {
-        violations.push(`${label} entry states a figure not covered by the facts it cites (${unattributed.join(', ')})`);
+        violations.push(violation(VIOLATION_CODES.UNAUTHORIZED_NUMBER, `${label} entry states a figure not covered by the facts it cites (${unattributed.join(', ')})`));
         continue;
       }
       // A named metric must match the cited facts, so a real figure cannot be
@@ -529,7 +566,7 @@ function validateGroundedItems(items, label, insightsById, registry, cfg, violat
       if (referenced.length > 0) {
         const mismatched = citedFacts.filter((f) => !referenced.some((p) => String(f.id).includes(p)));
         if (mismatched.length > 0) {
-          violations.push(`${label} entry names a metric its cited facts do not cover (${mismatched.map((f) => f.id).join(', ')})`);
+          violations.push(violation(VIOLATION_CODES.WRONG_METRIC, `${label} entry names a metric its cited facts do not cover (${mismatched.map((f) => f.id).join(', ')})`));
           continue;
         }
       }
@@ -542,7 +579,7 @@ function validateGroundedItems(items, label, insightsById, registry, cfg, violat
           return direction === 'decline' ? v < 0 : v > 0;
         });
         if (!signed) {
-          violations.push(`${label} entry asserts a ${direction} without a cited derived fact showing that sign`);
+          violations.push(violation(VIOLATION_CODES.WRONG_SIGN, `${label} entry asserts a ${direction} without a cited derived fact showing that sign`));
           continue;
         }
       }
@@ -550,7 +587,7 @@ function validateGroundedItems(items, label, insightsById, registry, cfg, violat
 
     const fabricated = findUngroundedNumbers(body, registry);
     if (fabricated.length > 0) {
-      violations.push(`${label} entry states a figure that is not an authorised fact (${fabricated.join(', ')})`);
+      violations.push(violation(VIOLATION_CODES.UNAUTHORIZED_NUMBER, `${label} entry states a figure that is not an authorised fact (${fabricated.join(', ')})`));
       continue;
     }
 
@@ -577,25 +614,25 @@ export function validateAiResult(result, request, config = {}) {
   const cfg = resolveAiConfig(config);
 
   if (cfg.enabled !== true) {
-    return { success: false, violations: ['AI layer is disabled'], result: null };
+    return { success: false, violations: [violation('AI_DISABLED', 'AI layer is disabled')], result: null };
   }
   if (!request || typeof request !== 'object' || !Array.isArray(request.insights)) {
-    return { success: false, violations: ['invalid request package'], result: null };
+    return { success: false, violations: [violation(VIOLATION_CODES.ADAPTER_FAULT, 'invalid request package')], result: null };
   }
   if (!result || typeof result !== 'object' || Array.isArray(result)) {
-    return { success: false, violations: ['result must be an object'], result: null };
+    return { success: false, violations: [violation(VIOLATION_CODES.MALFORMED_RESPONSE, 'result must be an object')], result: null };
   }
 
   // The deterministic layer owns state. An answer may not carry one.
   for (const forbidden of ['state', 'states', 'verdict', 'verdicts', 'status', 'score']) {
     if (forbidden in result) {
-      violations.push(`result must not carry "${forbidden}"; the deterministic layer owns it`);
+      violations.push(violation(VIOLATION_CODES.STATE_CLAIM, `result must not carry "${forbidden}"; the deterministic layer owns it`));
     }
   }
 
   for (const key of Object.keys(result).sort()) {
     if (!AI_RESULT_SECTIONS.includes(key)) {
-      violations.push(`result contains unknown section "${key}"`);
+      violations.push(violation(VIOLATION_CODES.UNKNOWN_SECTION, `result contains unknown section "${key}"`));
     }
   }
 
@@ -623,16 +660,16 @@ export function validateAiResult(result, request, config = {}) {
   const summaryText = text(result.summary);
   if (summaryText !== null) {
     const causal = findCausalClaims(summaryText);
-    if (causal.length > 0) violations.push(`summary asserts causation (${causal.join(', ')})`);
+    if (causal.length > 0) violations.push(violation(VIOLATION_CODES.CAUSAL_CLAIM, `summary asserts causation (${causal.join(', ')})`));
     const instructions = findInstructionPhrases(summaryText);
-    if (instructions.length > 0) violations.push(`summary contains a trading instruction (${instructions.join(', ')})`);
+    if (instructions.length > 0) violations.push(violation(VIOLATION_CODES.TRADING_INSTRUCTION, `summary contains a trading instruction (${instructions.join(', ')})`));
     const unsupported = findUnsupportedStateClaims(summaryText, request.insights);
     if (unsupported.length > 0) {
-      violations.push(`summary restates a state no insight supports (${unsupported.join(', ')})`);
+      violations.push(violation(VIOLATION_CODES.STATE_CLAIM, `summary restates a state no insight supports (${unsupported.join(', ')})`));
     }
     const fabricated = findUngroundedNumbers(summaryText, registry);
     if (fabricated.length > 0) {
-      violations.push(`summary states a figure that is not an authorised fact (${fabricated.join(', ')})`);
+      violations.push(violation(VIOLATION_CODES.UNAUTHORIZED_NUMBER, `summary states a figure that is not an authorised fact (${fabricated.join(', ')})`));
     }
   }
 
@@ -646,27 +683,27 @@ export function validateAiResult(result, request, config = {}) {
   const questions = [];
   if (result.questionsToInvestigate != null) {
     if (!Array.isArray(result.questionsToInvestigate)) {
-      violations.push('questionsToInvestigate must be an array');
+      violations.push(violation(VIOLATION_CODES.MALFORMED_RESPONSE, 'questionsToInvestigate must be an array'));
     } else {
       for (const raw of result.questionsToInvestigate) {
         const body = text(raw);
         if (!body) {
-          violations.push('questionsToInvestigate contains an empty entry');
+          violations.push(violation(VIOLATION_CODES.MALFORMED_RESPONSE, 'questionsToInvestigate contains an empty entry'));
           continue;
         }
         const instructions = findInstructionPhrases(body);
         if (instructions.length > 0) {
-          violations.push(`questionsToInvestigate contains an instruction (${instructions.join(', ')})`);
+          violations.push(violation(VIOLATION_CODES.TRADING_INSTRUCTION, `questionsToInvestigate contains an instruction (${instructions.join(', ')})`));
           continue;
         }
         if (body.endsWith('?') === false) {
-          violations.push('questionsToInvestigate entry is not phrased as a question');
+          violations.push(violation(VIOLATION_CODES.MALFORMED_RESPONSE, 'questionsToInvestigate entry is not phrased as a question'));
           continue;
         }
         questions.push(body);
       }
       if (questions.length > cfg.maxOutputItems) {
-        violations.push(`questionsToInvestigate exceeds maxOutputItems`);
+        violations.push(violation(VIOLATION_CODES.OUTPUT_LIMIT, 'questionsToInvestigate exceeds maxOutputItems'));
       }
     }
   }
@@ -693,6 +730,8 @@ export default {
   AI_RESULT_SECTIONS,
   DEFAULT_AI_CONFIG,
   FORBIDDEN_INSTRUCTION_PHRASES,
+  VIOLATION_CODES,
+  violation,
   NUMERIC_FACT_KINDS,
   resolveAiConfig,
   weakestTraceability,

@@ -27,9 +27,11 @@ import { buildAiContext } from './aiContextBuilder.js';
 import {
   AI_CONTRACT_VERSION,
   AI_RESULT_SECTIONS,
+  VIOLATION_CODES,
   isValidProviderAdapter,
   resolveAiConfig,
   validateAiResult,
+  violation,
 } from './aiAdapterContract.js';
 
 /**
@@ -205,7 +207,12 @@ export async function runAiProvider(options = {}) {
 
   const parsed = parseResponse(raw);
   if (!parsed.success) {
-    return outcome('rejected', { reason: parsed.reason });
+    // Unparseable output is a contract failure and must carry a code, or it
+    // would be invisible to provider-quality telemetry.
+    return outcome('rejected', {
+      violations: [violation(VIOLATION_CODES.MALFORMED_RESPONSE, parsed.reason)],
+      reason: parsed.reason,
+    });
   }
 
   const validated = validateAiResult(parsed.candidate, validationRequest, cfg);

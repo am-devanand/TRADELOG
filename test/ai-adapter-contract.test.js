@@ -1,5 +1,11 @@
 import { test, ok, equal, deepEqual } from './helpers.js';
 
+// Violations are { code, message } objects; these assertions read the human
+// message while the code is asserted separately.
+function messages(result) {
+  return (result.violations || []).map((v) => (v && v.message !== undefined ? v.message : String(v))).join(' ');
+}
+
 const ai = await import('../src/js/utils/aiAdapterContract.js');
 const cons = await import('../src/js/utils/intelligenceConsolidation.js');
 const degradation = await import('../src/js/utils/degradationEngine.js');
@@ -112,7 +118,8 @@ test('config: disabled means every result is rejected and none is returned', () 
   const v = okResult({ summary: 'Anything at all.' }, f.request, {});
   equal(v.success, false);
   equal(v.result, null);
-  deepEqual(v.violations, ['AI layer is disabled']);
+  equal(v.violations[0].code, 'AI_DISABLED');
+  equal(v.violations[0].message, 'AI layer is disabled');
 });
 
 test('request: is deterministic, bounded and marked as generated from the deterministic layer', () => {
@@ -169,7 +176,7 @@ test('grounding: a single record citation cannot carry a mixed aggregate claim',
     }],
   }, f.request);
   equal(v.success, false, 'the aggregate citation caps the claim at aggregate');
-  ok(v.violations[0].includes('aggregate-level evidence'), v.violations[0]);
+  ok(v.violations[0].message.includes('aggregate-level evidence'), v.violations[0].message);
 });
 
 test('grounding: a mixed record and pattern claim caps at pattern', () => {
@@ -190,7 +197,7 @@ test('grounding: record-level claim on aggregate evidence is rejected', () => {
     observations: [{ text: 'Individual trades show the shift.', insightIds: [f.attr.id], groundedOn: 'record' }],
   }, f.request);
   equal(v.success, false);
-  ok(v.violations[0].includes('record grounding'), v.violations[0]);
+  ok(v.violations[0].message.includes('record grounding'), v.violations[0].message);
 });
 
 test('grounding: record-level claim on pattern evidence is rejected', () => {
@@ -199,7 +206,7 @@ test('grounding: record-level claim on pattern evidence is rejected', () => {
     observations: [{ text: 'These trades demonstrate the pattern.', insightIds: [f.pattern.id], groundedOn: 'record' }],
   }, f.request);
   equal(v.success, false);
-  ok(v.violations[0].includes('record grounding'), v.violations[0]);
+  ok(v.violations[0].message.includes('record grounding'), v.violations[0].message);
 });
 
 test('grounding: record-level claim is allowed on record evidence', () => {
@@ -207,7 +214,7 @@ test('grounding: record-level claim is allowed on record evidence', () => {
   const v = okResult({
     observations: [{ text: 'The compared windows show a smaller profit factor.', insightIds: [f.watch.id], groundedOn: 'record' }],
   }, f.request);
-  ok(v.success, v.violations.join(' | '));
+  ok(v.success, messages(v))
   equal(v.result.observations[0].groundedOn, 'record');
   equal(v.result.observations[0].status, 'observed');
 });
@@ -217,7 +224,7 @@ test('grounding: a claim may be weaker than its evidence, never stronger', () =>
   const v = okResult({
     observations: [{ text: 'The grouped figures moved.', insightIds: [f.watch.id], groundedOn: 'aggregate' }],
   }, f.request);
-  ok(v.success, v.violations.join(' | '));
+  ok(v.success, messages(v))
   equal(v.result.observations[0].groundedOn, 'aggregate');
 });
 
@@ -236,7 +243,7 @@ test('state: WATCH cannot be narrated as degrading', () => {
       observations: [{ text: `This strategy is ${phrase}.`, insightIds: [f.watch.id], groundedOn: 'record' }],
     }, f.request);
     equal(v.success, false, `"${phrase}" must be rejected`);
-    ok(v.violations[0].includes('restates a state'), v.violations[0]);
+    ok(v.violations[0].message.includes('restates a state'), v.violations[0].message);
   }
 });
 
@@ -245,7 +252,7 @@ test('state: a claim matching a real cited state is allowed', () => {
   const v = okResult({
     observations: [{ text: 'This area is worth watching rather than acting on.', insightIds: [f.watch.id], groundedOn: 'record' }],
   }, f.request);
-  ok(v.success, v.violations.join(' | '));
+  ok(v.success, messages(v))
 });
 
 test('state: the result may not carry its own state or verdict', () => {
@@ -253,7 +260,7 @@ test('state: the result may not carry its own state or verdict', () => {
   for (const key of ['state', 'states', 'verdict', 'verdicts', 'score']) {
     const v = okResult({ [key]: 'DEGRADED' }, f.request);
     equal(v.success, false, `${key} must be rejected`);
-    ok(v.violations.some((x) => x.includes(key)));
+    ok(v.violations.some((x) => x.message.includes(key)));
   }
 });
 
@@ -261,7 +268,7 @@ test('state: unknown sections are rejected', () => {
   const f = fixture();
   const v = okResult({ summary: 'ok', recommendations: ['do something'] }, f.request);
   equal(v.success, false);
-  ok(v.violations.some((x) => x.includes('unknown section')));
+  ok(v.violations.some((x) => x.message.includes('unknown section')));
 });
 
 // ---------- anti-fabrication: value-grounded, not digit-literal ----------
@@ -302,7 +309,7 @@ test('facts: introducing a new value is rejected', () => {
       observations: [{ text: t, insightIds: [f.watch.id], groundedOn: 'record', ...(ids ? { factIds: ids } : {}) }],
     }, f.request);
     equal(v.success, false, `"${t}" must be rejected`);
-    ok(v.violations.join(' ').includes(needle), v.violations.join(' '));
+    ok(messages(v).includes(needle), messages(v))
   };
   const hist = f.request.allowedNumericFacts.find((x) => x.id === `${f.watch.id}.winRate.historical`);
   const size = f.request.allowedNumericFacts.find((x) => x.id === `${f.watch.id}.sample.size`);
@@ -322,7 +329,7 @@ test('facts: a model-computed delta is rejected even though it is arithmetically
     observations: [{ text: 'Win rate declined 3.1%.', insightIds: [f.watch.id], groundedOn: 'record', factIds: [wc.id] }],
   }, f.request);
   equal(v.success, false);
-  ok(v.violations.join(' ').includes('not covered by the facts it cites'), v.violations.join(' '));
+  ok(messages(v).includes('not covered by the facts it cites'), messages(v))
 });
 
 test('facts: a published derived change may be restated', () => {
@@ -394,14 +401,14 @@ test('prohibition: trading instructions are rejected', () => {
       observations: [{ text: `You should ${phrase}.`, insightIds: [f.watch.id], groundedOn: 'record' }],
     }, f.request);
     equal(v.success, false, `"${phrase}" must be rejected`);
-    ok(v.violations[0].includes('instruction'), v.violations[0]);
+    ok(v.violations[0].message.includes('instruction'), v.violations[0].message);
   }
 });
 
 test('prohibition: questions must be phrased as questions and carry no instruction', () => {
   const f = fixture();
   const good = okResult({ questionsToInvestigate: ['Is this concentrated in one session?'] }, f.request);
-  ok(good.success, good.violations.join(' | '));
+  ok(good.success, messages(good));
   equal(okResult({ questionsToInvestigate: ['Increase your position size'] }, f.request).success, false);
   equal(okResult({ questionsToInvestigate: ['Stop trading this strategy'] }, f.request).success, false);
 });
@@ -411,7 +418,7 @@ test('prohibition: hypotheses are always marked unverified', () => {
   const v = okResult({
     possibleHypotheses: [{ text: 'Market regime may differ between the windows.', insightIds: [f.watch.id], groundedOn: 'aggregate' }],
   }, f.request);
-  ok(v.success, v.violations.join(' | '));
+  ok(v.success, messages(v))
   equal(v.result.possibleHypotheses[0].status, 'unverified');
 });
 
@@ -431,7 +438,7 @@ test('robustness: output item counts are bounded', () => {
   const many = Array.from({ length: 30 }, () => ({ text: 'A grouped figure moved.', insightIds: [f.attr.id], groundedOn: 'aggregate' }));
   const v = okResult({ observations: many }, f.request);
   equal(v.success, false);
-  ok(v.violations.some((x) => x.includes('maxOutputItems')));
+  ok(v.violations.some((x) => x.message.includes('maxOutputItems')));
 });
 
 test('robustness: a validated result carries only the allowed sections', () => {
@@ -442,7 +449,7 @@ test('robustness: a validated result carries only the allowed sections', () => {
     questionsToInvestigate: ['Is this concentrated in one session?'],
     possibleHypotheses: [{ text: 'Sample composition may differ.', insightIds: [f.attr.id], groundedOn: 'aggregate' }],
   }, f.request);
-  ok(v.success, v.violations.join(' | '));
+  ok(v.success, messages(v))
   deepEqual(Object.keys(v.result).sort(), [...AI_RESULT_SECTIONS, 'contractVersion'].sort());
   equal(v.result.contractVersion, AI_CONTRACT_VERSION);
 });

@@ -17,6 +17,12 @@ const {
   buildAiContext,
 } = ctx;
 
+
+// Violations are { code, message } objects; these assertions read the human
+// message while the code is asserted separately.
+function messages(result) {
+  return (result.violations || []).map((v) => (v && v.message !== undefined ? v.message : String(v))).join(' ');
+}
 const CODE = new URL('../src/js/utils/aiContextBuilder.js', import.meta.url);
 
 let clock = 0;
@@ -188,12 +194,12 @@ test('facts: the context drives the contract validator end to end', () => {
   const good = ai.validateAiResult({
     observations: [{ text: 'Win rate was 80.', insightIds: [record.id], groundedOn: 'record', factIds: [fact('winRate.historical')] }],
   }, request, { enabled: true });
-  ok(good.success, good.violations.join(' | '));
+  ok(good.success, messages(good));
 
   const decline = ai.validateAiResult({
     observations: [{ text: 'Win rate decreased by 3.12%.', insightIds: [record.id], groundedOn: 'record', factIds: [fact('winRate.change')] }],
   }, request, { enabled: true });
-  ok(decline.success, 'the published change is now expressible: ' + decline.violations.join(' | '));
+  ok(decline.success, 'the published change is now expressible: ' + messages(decline));
 
   const bad = ai.validateAiResult({
     observations: [{ text: 'Win rate was 82.', insightIds: [record.id], groundedOn: 'record', factIds: [fact('winRate.historical')] }],
@@ -310,7 +316,7 @@ test('amendment: the exact published change is accepted and a rounded one is ref
       insightIds: [record.id], groundedOn: 'record', factIds: [change.id],
     }],
   }, request, { enabled: true });
-  ok(good.success, 'the published change is usable: ' + good.violations.join(' | '));
+  ok(good.success, 'the published change is usable: ' + messages(good));
 
   const rounded = ai.validateAiResult({
     observations: [{ text: 'Win rate decreased by 3.1%.', insightIds: [record.id], groundedOn: 'record', factIds: [change.id] }],

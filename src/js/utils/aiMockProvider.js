@@ -87,11 +87,13 @@ export const SCENARIOS = {
   wrongMetric: (request) => {
     const record = (request?.context?.insights || []).find((i) => i.traceability === 'record');
     const facts = request?.context?.allowedNumericFacts || [];
-    const pf = facts.find((f) => String(f.id).includes('profitFactor.change'));
+    // Cite a fact whose value matches the figure but belongs to a different
+    // metric, so the metric rule is what fails rather than the numeric one.
+    const pfHistorical = facts.find((f) => String(f.id).includes('profitFactor.historical'));
     const wc = facts.find((f) => String(f.id).includes('winRate.historical'));
     return {
       ...validScenario(request),
-      observations: [observation('Win rate was 80.', [record.id], pf ? [pf.id] : [wc?.id].filter(Boolean))],
+      observations: [observation('Win rate was 80.', [record.id], [pfHistorical?.id ?? wc?.id].filter(Boolean))],
     };
   },
 

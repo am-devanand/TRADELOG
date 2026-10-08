@@ -12,6 +12,12 @@ const contextBuilder = await import('../src/js/utils/aiContextBuilder.js');
 const { AI_OUTCOMES, ADAPTER_PROHIBITIONS, buildPrompt, parseResponse, runAiProvider } = adapter;
 const { SCENARIOS, createMockProvider, validScenario } = mock;
 
+
+// Violations are { code, message } objects; these assertions read the human
+// message while the code is asserted separately.
+function messages(result) {
+  return (result.violations || []).map((v) => (v && v.message !== undefined ? v.message : String(v))).join(' ');
+}
 const ADAPTER_CODE = new URL('../src/js/utils/aiProviderAdapter.js', import.meta.url);
 const MOCK_CODE = new URL('../src/js/utils/aiMockProvider.js', import.meta.url);
 const PAGE_CODE = new URL('../src/js/pages/intelligence.js', import.meta.url);
@@ -88,14 +94,14 @@ test('proof: an unknown factId is rejected', async () => {
 test('proof: a figure attached to the wrong metric is rejected', async () => {
   const r = await runWith(createMockProvider({ scenario: 'wrongMetric' }));
   equal(r.outcome, 'rejected');
-  ok(r.violations.join(' ').includes('metric') || r.violations.join(' ').includes('covered'),
-    r.violations.join(' '));
+  ok(messages(r).includes('metric') || messages(r).includes('covered'),
+    messages(r))
 });
 
 test('proof: a direction claim without a matching sign is rejected', async () => {
   const r = await runWith(createMockProvider({ scenario: 'wrongSign' }));
   equal(r.outcome, 'rejected');
-  ok(r.violations.join(' ').includes('decline'), r.violations.join(' '));
+  ok(messages(r).includes('decline'), messages(r))
 });
 
 test('proof: an invented number is rejected', async () => {
@@ -105,13 +111,13 @@ test('proof: an invented number is rejected', async () => {
 test('proof: a causal claim is rejected', async () => {
   const r = await runWith(createMockProvider({ scenario: 'causalClaim' }));
   equal(r.outcome, 'rejected');
-  ok(r.violations.join(' ').includes('causation'), r.violations.join(' '));
+  ok(messages(r).includes('causation'), messages(r))
 });
 
 test('proof: a trading instruction is rejected', async () => {
   const r = await runWith(createMockProvider({ scenario: 'tradingInstruction' }));
   equal(r.outcome, 'rejected');
-  ok(r.violations.join(' ').includes('instruction'), r.violations.join(' '));
+  ok(messages(r).includes('instruction'), messages(r))
 });
 
 test('proof: an unsupported state claim is rejected', async () => {
@@ -121,7 +127,7 @@ test('proof: an unsupported state claim is rejected', async () => {
 test('proof: a self-assigned verdict is rejected', async () => {
   const r = await runWith(createMockProvider({ scenario: 'selfAssignedState' }));
   equal(r.outcome, 'rejected');
-  ok(r.violations.join(' ').includes('owns it'), r.violations.join(' '));
+  ok(messages(r).includes('owns it'), messages(r))
 });
 
 test('proof: a record-level claim on pattern evidence is rejected', async () => {
