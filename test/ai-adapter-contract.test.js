@@ -12,8 +12,10 @@ const {
   DEFAULT_AI_CONFIG,
   resolveAiConfig,
   weakestTraceability,
-  collectContextNumbers,
-  findFabricatedNumbers,
+  NUMERIC_FACT_KINDS,
+  numericSurfaceForms,
+  buildNumericFactRegistry,
+  findUngroundedNumbers,
   findUnsupportedStateClaims,
   buildAiRequest,
   isValidProviderAdapter,
@@ -262,32 +264,107 @@ test('state: unknown sections are rejected', () => {
   ok(v.violations.some((x) => x.includes('unknown section')));
 });
 
-// ---------- anti-fabrication ----------
+// ---------- anti-fabrication: value-grounded, not digit-literal ----------
 
-test('fabrication: numbers absent from the package are rejected', () => {
+test('facts: the registry publishes authorised values with their surface forms', () => {
   const f = fixture();
-  const allowed = collectContextNumbers(f.request.insights);
-  deepEqual(findFabricatedNumbers('profit factor moved from 8 to 6.89', allowed), []);
-  deepEqual(findFabricatedNumbers('win rate reached 87 percent', allowed), ['87']);
+  const registry = buildNumericFactRegistry(f.request.insights);
+  ok(registry.facts.length > 0, 'facts published');
+  for (const fact of registry.facts) {
+    ok(NUMERIC_FACT_KINDS.includes(fact.kind), `${fact.id} has a valid kind`);
+    ok(fact.permittedForms.length > 0, `${fact.id} has permitted forms`);
+    ok(fact.permittedForms.includes(String(fact.value)), `${fact.id} permits its own value`);
+    ok(typeof fact.source === 'string' && fact.source.length > 0, `${fact.id} names its source`);
+  }
+  equal(JSON.stringify(registry), JSON.stringify(buildNumericFactRegistry(f.request.insights)),
+    'registry building is deterministic');
+});
+
+test('facts: re-expressing a value is allowed, in several surface forms', () => {
+  const f = fixture();
+  const ok1 = (t) => okResult({
+    observations: [{ text: t, insightIds: [f.watch.id], groundedOn: 'record' }],
+  }, f.request);
+  ok(ok1('Win rate was 80%.').success, 'exact restatement with a percent sign');
+  ok(ok1('The sample contained forty trades.').success, 'spelled-out integer');
+  ok(ok1('Average R was 1.33R.').success, 'unit reformat');
+  ok(ok1('There were 40 trades.').success, 'plain restatement');
+});
+
+test('facts: introducing a new value is rejected', () => {
+  const f = fixture();
+  const reject = (t, needle) => {
+    const v = okResult({ observations: [{ text: t, insightIds: [f.watch.id], groundedOn: 'record' }] }, f.request);
+    equal(v.success, false, `"${t}" must be rejected`);
+    ok(v.violations.join(' ').includes(needle), v.violations.join(' '));
+  };
+  reject('Win rate was 82%.', 'not an authorised fact');
+  reject('There were around 45 trades.', 'not an authorised fact');
+  reject('The strategy improved by 12%.', 'no cited insight supports');
+});
+
+test('facts: a model-computed delta is rejected even though it is arithmetically correct', () => {
+  const f = fixture();
+  // 80 -> 77.5 is a 3.1% fall. The deterministic layer did not publish that
+  // figure, so the model is not permitted to derive it.
   const v = okResult({
-    observations: [{ text: 'Win rate reached 87 percent.', insightIds: [f.watch.id], groundedOn: 'record' }],
+    observations: [{ text: 'Win rate declined 3.1%.', insightIds: [f.watch.id], groundedOn: 'record' }],
   }, f.request);
   equal(v.success, false);
-  ok(v.violations[0].includes('invents figures'), v.violations[0]);
+  ok(v.violations.join(' ').includes('not an authorised fact'), v.violations.join(' '));
 });
 
-test('fabrication: the summary is held to the same numeric rule', () => {
+test('facts: a published derived change may be restated', () => {
+  // Degradation windows publish a change; once it is in the registry the
+  // model may use it, because the subtraction happened upstream.
+  const insight = {
+    id: 'x', traceability: 'record', hasRecordEvidence: true, state: 'WATCH',
+    summary: 's', evidence: [{ description: 'w', sourceRefs: ['t1'], sources: [], window: null }],
+    sample: { size: 40, band: 'STRONG', smallSample: false, qualificationReason: '' },
+    ranking: { eligible: true, label: 'Rankable', suppressionReason: null },
+    metric: { metrics: [{ metric: 'winRate', historical: 80, recent: 77.5, change: -0.0312 }] },
+  };
+  const registry = buildNumericFactRegistry([insight]);
+  const derived = registry.facts.filter((x) => x.kind === 'derived');
+  ok(derived.length > 0, 'the published change is registered as derived');
+  equal(derived[0].source, 'degradationEngine.metricVerdict');
+  deepEqual(findUngroundedNumbers('The change was 0.0312', registry), []);
+  deepEqual(findUngroundedNumbers('The change was 3.12', registry), [], 'percent form permitted');
+  ok(findUngroundedNumbers('The change was 3.1', registry).includes('3.1'), 'rounding is not a new fact');
+});
+
+test('facts: the summary is held to the same rule as observations', () => {
   const f = fixture();
-  equal(okResult({ summary: 'Aggregate win rate is 50 across the slice.' }, f.request).success, true);
-  equal(okResult({ summary: 'Aggregate win rate is 92 across the slice.' }, f.request).success, false);
+  equal(okResult({ summary: 'Win rate was 80.' }, f.request).success, true);
+  equal(okResult({ summary: 'Win rate was 82.' }, f.request).success, false);
 });
 
-test('fabrication: numbers present anywhere in the package are permitted', () => {
-  const allowed = collectContextNumbers([
-    { id: 'x', sample: { size: 40 }, evidence: [{ description: '80 vs 77.5' }], ranking: { rank: 3 } },
-  ]);
-  for (const n of ['40', '80', '77.5', '3']) ok(allowed.has(n), `${n} collected`);
-  deepEqual(findFabricatedNumbers('80 compared with 77.5 across 40 records', allowed), []);
+test('facts: a hyphen inside a word is not read as a negative sign', () => {
+  const insight = {
+    id: 'w', traceability: 'record', hasRecordEvidence: true, state: 'WATCH',
+    summary: 's', evidence: [{ description: 'd', sourceRefs: ['t1'], sources: [], window: '40-vs-40' }],
+    sample: { size: 40, band: 'STRONG', smallSample: false, qualificationReason: '' },
+    ranking: { eligible: true, label: 'Rankable', suppressionReason: null },
+  };
+  const registry = buildNumericFactRegistry([insight]);
+  equal(registry.facts.some((x) => x.value === -40), false, 'no fabricated negative forty');
+  deepEqual(findUngroundedNumbers('Compared 40 against 40.', registry), []);
+});
+
+test('facts: surface forms never invent a different quantity', () => {
+  const forms = numericSurfaceForms(80);
+  ok(forms.includes('80'));
+  ok(forms.includes('8000'), 'unit rescaling is a representation change');
+  equal(forms.includes('82'), false, 'a neighbouring value is not a representation');
+  equal(forms.includes('160'), false, 'doubling is arithmetic, not representation');
+});
+
+test('facts: registry handles junk without throwing', () => {
+  for (const bad of [null, undefined, 'x', 42, []]) {
+    const r = buildNumericFactRegistry(bad);
+    ok(Array.isArray(r.facts));
+  }
+  deepEqual(findUngroundedNumbers('anything 99', buildNumericFactRegistry([])), ['99']);
 });
 
 // ---------- prohibitions ----------

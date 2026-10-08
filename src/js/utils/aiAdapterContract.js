@@ -137,45 +137,184 @@ export function weakestTraceability(insights) {
 }
 
 /**
- * Every numeric token present in the whitelisted package. A provider answer
- * may only use numbers that already appear here; anything else is a
- * fabricated statistic.
+ * Numeric facts come in two kinds.
+ *
+ * `exact`   — a value read straight from a source record.
+ * `derived` — a value the deterministic layer already computed and published
+ *             (for example a window-over-window change). AI may restate it
+ *             because the arithmetic happened upstream, never in the model.
  */
-export function collectContextNumbers(insights) {
-  const found = new Set();
-  const visit = (value) => {
-    if (value == null) return;
-    if (typeof value === 'number') {
-      if (Number.isFinite(value)) found.add(String(value));
-      return;
-    }
-    if (typeof value === 'string') {
-      for (const match of value.match(/-?\d+(?:\.\d+)?/g) || []) found.add(match);
-      return;
-    }
-    if (Array.isArray(value)) {
-      for (const item of value) visit(item);
-      return;
-    }
-    if (typeof value === 'object') {
-      for (const key of Object.keys(value).sort()) visit(value[key]);
-    }
+export const NUMERIC_FACT_KINDS = ['exact', 'derived'];
+
+/**
+ * Surface forms a provider may use for one authoritative value.
+ *
+ * Formatting may change; the factual value may not. A value may be
+ * re-expressed in another unit (0.8 and 80 are the same quantity) and small
+ * integers may be spelled out ("forty"), because neither step introduces a
+ * new fact. Rounding to a different precision is NOT included: 3.1 is a
+ * different value from 3.12, and producing it would be arithmetic the
+ * deterministic layer never did.
+ */
+export function numericSurfaceForms(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return [];
+  const forms = new Set();
+  const add = (v) => {
+    if (!Number.isFinite(v)) return;
+    // Scaling a fraction produces float noise (0.0312 * 100 is
+    // 3.1200000000000006), which would make the percent form of a published
+    // change unmatchable. Trim to significant digits before comparing.
+    forms.add(String(Number(v.toPrecision(12))));
   };
-  for (const insight of insights) visit(insight);
-  return found;
+  add(num);
+  add(Math.abs(num));
+  for (const scale of [10, 100, 1000, 0.1, 0.01, 0.001]) {
+    add(num * scale);
+    add(Math.abs(num) * scale);
+  }
+  if (Number.isInteger(num) && Math.abs(num) <= 9999) {
+    forms.add(String(Math.abs(num)));
+  }
+  return [...forms];
+}
+
+const NUMBER_WORDS = {
+  0: 'zero', 1: 'one', 2: 'two', 3: 'three', 4: 'four', 5: 'five', 6: 'six',
+  7: 'seven', 8: 'eight', 9: 'nine', 10: 'ten', 11: 'eleven', 12: 'twelve',
+  13: 'thirteen', 14: 'fourteen', 15: 'fifteen', 16: 'sixteen', 17: 'seventeen',
+  18: 'eighteen', 19: 'nineteen', 20: 'twenty', 30: 'thirty', 40: 'forty',
+  50: 'fifty', 60: 'sixty', 70: 'seventy', 80: 'eighty', 90: 'ninety',
+  100: 'one hundred',
+};
+
+function addWordForms(forms, value) {
+  const num = Number(value);
+  if (!Number.isFinite(num) || !Number.isInteger(num)) return;
+  const abs = Math.abs(num);
+  if (abs === 0) {
+    forms.add(NUMBER_WORDS[0]);
+    return;
+  }
+  if (abs <= 20) {
+    forms.add(NUMBER_WORDS[abs]);
+    return;
+  }
+  const tens = Math.floor(abs / 10) * 10;
+  const ones = abs % 10;
+  if (tens === 100 && ones === 0) {
+    forms.add(NUMBER_WORDS[100]);
+    return;
+  }
+  if (NUMBER_WORDS[tens] && ones === 0) {
+    forms.add(NUMBER_WORDS[tens]);
+    return;
+  }
+  if (NUMBER_WORDS[tens] && NUMBER_WORDS[ones]) {
+    forms.add(`${NUMBER_WORDS[tens]}-${NUMBER_WORDS[ones]}`);
+  }
 }
 
 /**
- * Numbers appearing in a provider answer that were never supplied.
- * Ordinal words are ignored; only digits are checked.
+ * Build the numeric fact registry from the authoritative package.
+ *
+ * Every entry names the value, where it came from, and which surface forms
+ * the provider may use. Values are read from fields the deterministic layer
+ * already published; nothing here is calculated from the insights.
  */
-export function findFabricatedNumbers(textValue, allowed) {
-  const tokens = String(textValue ?? '').match(/-?\d+(?:\.\d+)?/g) || [];
-  const fabricated = [];
-  for (const token of tokens) {
-    if (!allowed.has(token)) fabricated.push(token);
+export function buildNumericFactRegistry(insights) {
+  const facts = [];
+  const seen = new Set();
+  const list = Array.isArray(insights) ? insights : [];
+  const push = (id, label, value, kind, source) => {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return;
+    const forms = new Set(numericSurfaceForms(num));
+    addWordForms(forms, num);
+    if (forms.size === 0) return;
+    if (seen.has(id)) return;
+    seen.add(id);
+    facts.push({
+      id,
+      label,
+      value: num,
+      unit: null,
+      kind: NUMERIC_FACT_KINDS.includes(kind) ? kind : 'exact',
+      source,
+      permittedForms: [...forms].sort(),
+    });
+  };
+
+  for (const insight of list) {
+    if (!insight || typeof insight !== 'object') continue;
+    const base = text(insight.id) ?? 'insight';
+
+    if (insight.sample && Number.isFinite(Number(insight.sample.size))) {
+      push(`${base}.sample.size`, 'sample size', insight.sample.size, 'exact', 'intelligenceContracts.assessSample');
+    }
+    if (insight.ranking && Number.isFinite(Number(insight.ranking.rank))) {
+      push(`${base}.ranking.rank`, 'rank', insight.ranking.rank, 'exact', 'intelligenceConsolidation.rankingFor');
+    }
+    if (insight.metric && Number.isFinite(Number(insight.metric.rankValue))) {
+      push(`${base}.metric.rankValue`, 'rank value', insight.metric.rankValue, 'exact', 'performanceAttribution.getAttribution');
+    }
+
+    // Changes the deterministic layer already computed (degradation windows).
+    // These are `derived` precisely so the model is not doing the subtraction.
+    const metrics = Array.isArray(insight.metric?.metrics) ? insight.metric.metrics : [];
+    for (const m of metrics) {
+      if (!m || typeof m !== 'object') continue;
+      if (Number.isFinite(Number(m.change))) {
+        push(`${base}.change.${text(m.metric) ?? 'metric'}`, `${text(m.metric) ?? 'metric'} change`,
+          m.change, 'derived', 'degradationEngine.metricVerdict');
+      }
+      for (const key of ['historical', 'recent']) {
+        if (Number.isFinite(Number(m[key]))) {
+          push(`${base}.${key}.${text(m.metric) ?? 'metric'}`, `${text(m.metric) ?? 'metric'} ${key}`,
+            m[key], 'exact', 'tradingAnalytics.getCoreMetrics');
+        }
+      }
+    }
+
+    // Figures already present in the evidence text and window label.
+    const haystack = [];
+    for (const entry of Array.isArray(insight.evidence) ? insight.evidence : []) {
+      if (entry && typeof entry.description === 'string') haystack.push(entry.description);
+      if (entry && typeof entry.window === 'string') haystack.push(entry.window);
+    }
+    const seenNumbers = new Set();
+    for (const raw of haystack) {
+      // A leading hyphen only counts as a sign when it is not the tail of a
+      // word such as the "-vs-" in a window label, which would otherwise turn
+      // "40-vs-40" into a fabricated negative forty.
+      for (const token of raw.match(/(?<![A-Za-z])-?\d+(?:\.\d+)?/g) || []) {
+        if (seenNumbers.has(token)) continue;
+        seenNumbers.add(token);
+        push(`${base}.evidence.${token}`, 'evidence figure', Number(token), 'exact', 'insight evidence');
+      }
+    }
   }
-  return [...new Set(fabricated)];
+
+  return {
+    facts,
+    allowedTokens: new Set(facts.flatMap((f) => f.permittedForms)),
+  };
+}
+
+/**
+ * Numbers in a provider answer that are not a permitted form of an
+ * authoritative fact. This is the anti-fabrication check: re-expressing a
+ * value is fine, introducing one is not.
+ */
+export function findUngroundedNumbers(textValue, registry) {
+  const allowed = registry instanceof Set ? registry : registry?.allowedTokens ?? new Set();
+  const tokens = String(textValue ?? '').match(/(?<![A-Za-z])-?\d+(?:\.\d+)?/g) || [];
+  const ungrounded = [];
+  for (const token of tokens) {
+    if (allowed.has(token)) continue;
+    ungrounded.push(token);
+  }
+  return [...new Set(ungrounded)];
 }
 
 function findInstructionPhrases(textValue) {
@@ -211,10 +350,15 @@ export function buildAiRequest(insights, config = {}) {
   const cfg = resolveAiConfig(config);
   const list = Array.isArray(insights) ? insights.filter((i) => i && typeof i === 'object') : [];
   const selected = [...list].sort((a, b) => compare(a.id, b.id)).slice(0, cfg.maxInsights);
+  const registry = buildNumericFactRegistry(selected);
   return {
     contractVersion: AI_CONTRACT_VERSION,
     generatedFrom: 'deterministic-intelligence',
     insights: selected,
+    // The provider may only use these values, in these forms. It is handed
+    // the registry rather than the raw insights so there is no path by which
+    // it could read a number that was never authorised.
+    allowedNumericFacts: registry.facts,
     policy: {
       maxOutputItems: cfg.maxOutputItems,
       allowedSections: [...AI_RESULT_SECTIONS],
@@ -240,7 +384,7 @@ export function isValidProviderAdapter(adapter) {
   return true;
 }
 
-function validateGroundedItems(items, label, insightsById, allowedNumbers, cfg, violations) {
+function validateGroundedItems(items, label, insightsById, registry, cfg, violations) {
   const out = [];
   if (items == null) return out;
   if (!Array.isArray(items)) {
@@ -306,9 +450,9 @@ function validateGroundedItems(items, label, insightsById, allowedNumbers, cfg, 
       violations.push(`${label} entry restates a state no cited insight supports (${unsupportedStates.join(', ')})`);
       continue;
     }
-    const fabricated = findFabricatedNumbers(body, allowedNumbers);
+    const fabricated = findUngroundedNumbers(body, registry);
     if (fabricated.length > 0) {
-      violations.push(`${label} entry invents figures not present in the package (${fabricated.join(', ')})`);
+      violations.push(`${label} entry states a figure that is not an authorised fact (${fabricated.join(', ')})`);
       continue;
     }
 
@@ -361,7 +505,14 @@ export function validateAiResult(result, request, config = {}) {
     const id = text(insight?.id);
     if (id !== null) insightsById.set(id, insight);
   }
-  const allowedNumbers = collectContextNumbers(request.insights);
+  const registry = Array.isArray(request.allowedNumericFacts)
+    ? {
+      facts: request.allowedNumericFacts,
+      allowedTokens: new Set(
+        request.allowedNumericFacts.flatMap((f) => (Array.isArray(f?.permittedForms) ? f.permittedForms : [])),
+      ),
+    }
+    : buildNumericFactRegistry(request.insights);
 
   const summaryText = text(result.summary);
   if (summaryText !== null) {
@@ -373,17 +524,17 @@ export function validateAiResult(result, request, config = {}) {
     if (unsupported.length > 0) {
       violations.push(`summary restates a state no insight supports (${unsupported.join(', ')})`);
     }
-    const fabricated = findFabricatedNumbers(summaryText, allowedNumbers);
+    const fabricated = findUngroundedNumbers(summaryText, registry);
     if (fabricated.length > 0) {
-      violations.push(`summary invents figures not present in the package (${fabricated.join(', ')})`);
+      violations.push(`summary states a figure that is not an authorised fact (${fabricated.join(', ')})`);
     }
   }
 
   const observations = validateGroundedItems(
-    result.observations, 'observations', insightsById, allowedNumbers, cfg, violations,
+    result.observations, 'observations', insightsById, registry, cfg, violations,
   );
   const hypotheses = validateGroundedItems(
-    result.possibleHypotheses, 'possibleHypotheses', insightsById, allowedNumbers, cfg, violations,
+    result.possibleHypotheses, 'possibleHypotheses', insightsById, registry, cfg, violations,
   );
 
   const questions = [];
@@ -436,10 +587,12 @@ export default {
   AI_RESULT_SECTIONS,
   DEFAULT_AI_CONFIG,
   FORBIDDEN_INSTRUCTION_PHRASES,
+  NUMERIC_FACT_KINDS,
   resolveAiConfig,
   weakestTraceability,
-  collectContextNumbers,
-  findFabricatedNumbers,
+  numericSurfaceForms,
+  buildNumericFactRegistry,
+  findUngroundedNumbers,
   findUnsupportedStateClaims,
   buildAiRequest,
   isValidProviderAdapter,
