@@ -312,6 +312,61 @@ function sourceFor(raw) {
  * evidence: an insight with neither is not an insight, and substituting
  * filler would present invented content as a real finding.
  */
+/**
+ * Display unit for a degradation metric. This is a label lookup, not
+ * arithmetic: it tells a consumer how to phrase a value the degradation
+ * engine already produced.
+ */
+const METRIC_UNITS = {
+  winRate: 'percent',
+  avgR: 'R',
+  profitFactor: 'ratio',
+};
+
+/**
+ * Authoritative numeric facts carried across the consolidation boundary.
+ *
+ * These are NOT new metrics and nothing is calculated here. The degradation
+ * engine already computed a change between its two windows and already
+ * published it on `metric.metrics[]`; normalisation was discarding it, which
+ * left downstream consumers able to restate both window endpoints but not the
+ * difference between them.
+ *
+ * This function only copies values that already exist on the source object.
+ * The arithmetic stays in degradationEngine.metricVerdict. Do not "improve"
+ * this by computing a change from the historical and recent values here — that
+ * would move an authoritative calculation out of the engine that owns it.
+ */
+function permittedNumericFacts(raw, source) {
+  if (source !== 'degradationEngine') return [];
+  const metrics = raw?.metric?.metrics;
+  if (!Array.isArray(metrics)) return [];
+  const out = [];
+  for (const m of metrics) {
+    if (!m || typeof m !== 'object') continue;
+    const name = text(m.metric);
+    if (name === null) continue;
+    const unit = METRIC_UNITS[name] ?? null;
+    const push = (field, kind) => {
+      const value = Number(m[field]);
+      if (!Number.isFinite(value)) return;
+      out.push({
+        metric: `${name}.${field}`,
+        value,
+        unit,
+        kind,
+        source: 'degradationEngine.metricVerdict',
+      });
+    };
+    // change is already computed upstream; historical and recent are the raw
+    // endpoints it was computed from.
+    push('change', 'derived');
+    push('historical', 'exact');
+    push('recent', 'exact');
+  }
+  return out;
+}
+
 function buildCanonical(raw, expectedSource) {
   if (!raw || typeof raw !== 'object') return null;
 
@@ -351,6 +406,9 @@ function buildCanonical(raw, expectedSource) {
     evidence,
     traceability,
     hasRecordEvidence: evidence.some((e) => Array.isArray(e.sourceRefs) && e.sourceRefs.length > 0),
+    permittedFacts: {
+      numeric: permittedNumericFacts(raw, source),
+    },
     sample,
     ranking: rankingFor(raw, state, source),
     investigationQuestion: investigationFor(state, source, raw),

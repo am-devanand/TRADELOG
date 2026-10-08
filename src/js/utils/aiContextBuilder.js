@@ -178,6 +178,17 @@ export function buildAiContext(insights, options = {}) {
       suppressionReason: clip(insight.ranking?.suppressionReason, 200),
     },
     evidence: buildEvidence(insight),
+    // Authoritative facts preserved by the consolidation layer. Carried
+    // through verbatim: this module neither calculates nor extends them.
+    permittedNumericFacts: (Array.isArray(insight.permittedFacts?.numeric)
+      ? insight.permittedFacts.numeric
+      : []).map((f) => ({
+      metric: f?.metric ?? null,
+      value: Number.isFinite(Number(f?.value)) ? Number(f.value) : null,
+      unit: f?.unit ?? null,
+      kind: f?.kind ?? null,
+      source: f?.source ?? null,
+    })),
     provenance: Array.isArray(insight.provenance) ? [...insight.provenance] : [],
     permittedFactIds: registry.facts
       .filter((f) => f.id.startsWith(`${text_(insight.id)}.`))

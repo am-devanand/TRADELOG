@@ -282,36 +282,47 @@ test('facts: the registry publishes authorised values with their surface forms',
 
 test('facts: re-expressing a value is allowed, in several surface forms', () => {
   const f = fixture();
-  const ok1 = (t) => okResult({
-    observations: [{ text: t, insightIds: [f.watch.id], groundedOn: 'record' }],
+  const fact = (suffix) => {
+    const found = f.request.allowedNumericFacts.find((x) => x.id === `${f.watch.id}.${suffix}`);
+    return found ? [found.id] : [];
+  };
+  const ok1 = (t, ids) => okResult({
+    observations: [{ text: t, insightIds: [f.watch.id], groundedOn: 'record', factIds: ids }],
   }, f.request);
-  ok(ok1('Win rate was 80%.').success, 'exact restatement with a percent sign');
-  ok(ok1('The sample contained forty trades.').success, 'spelled-out integer');
-  ok(ok1('Average R was 1.33R.').success, 'unit reformat');
-  ok(ok1('There were 40 trades.').success, 'plain restatement');
+  ok(ok1('Win rate was 80%.', fact('winRate.historical')).success, 'exact restatement with a percent sign');
+  ok(ok1('The sample contained forty trades.', fact('sample.size')).success, 'spelled-out integer');
+  ok(ok1('Average R was 1.33R.', fact('avgR.recent')).success, 'unit reformat');
+  ok(ok1('There were 40 trades.', fact('sample.size')).success, 'plain restatement');
 });
 
 test('facts: introducing a new value is rejected', () => {
   const f = fixture();
-  const reject = (t, needle) => {
-    const v = okResult({ observations: [{ text: t, insightIds: [f.watch.id], groundedOn: 'record' }] }, f.request);
+  const reject = (t, needle, ids) => {
+    const v = okResult({
+      observations: [{ text: t, insightIds: [f.watch.id], groundedOn: 'record', ...(ids ? { factIds: ids } : {}) }],
+    }, f.request);
     equal(v.success, false, `"${t}" must be rejected`);
     ok(v.violations.join(' ').includes(needle), v.violations.join(' '));
   };
-  reject('Win rate was 82%.', 'not an authorised fact');
-  reject('There were around 45 trades.', 'not an authorised fact');
+  const hist = f.request.allowedNumericFacts.find((x) => x.id === `${f.watch.id}.winRate.historical`);
+  const size = f.request.allowedNumericFacts.find((x) => x.id === `${f.watch.id}.sample.size`);
+  reject('Win rate was 82%.', 'not covered by the facts it cites', [hist.id]);
+  reject('There were around 45 trades.', 'not covered by the facts it cites', [size.id]);
   reject('The strategy improved by 12%.', 'no cited insight supports');
+  reject('Win rate was 80%.', 'without citing an authorised fact');
+  reject('Profitability fell by 8%.', 'without a cited derived fact', [hist.id]);
 });
 
 test('facts: a model-computed delta is rejected even though it is arithmetically correct', () => {
   const f = fixture();
   // 80 -> 77.5 is a 3.1% fall. The deterministic layer did not publish that
   // figure, so the model is not permitted to derive it.
+  const wc = f.request.allowedNumericFacts.find((x) => x.id === `${f.watch.id}.winRate.change`);
   const v = okResult({
-    observations: [{ text: 'Win rate declined 3.1%.', insightIds: [f.watch.id], groundedOn: 'record' }],
+    observations: [{ text: 'Win rate declined 3.1%.', insightIds: [f.watch.id], groundedOn: 'record', factIds: [wc.id] }],
   }, f.request);
   equal(v.success, false);
-  ok(v.violations.join(' ').includes('not an authorised fact'), v.violations.join(' '));
+  ok(v.violations.join(' ').includes('not covered by the facts it cites'), v.violations.join(' '));
 });
 
 test('facts: a published derived change may be restated', () => {

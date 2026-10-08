@@ -226,7 +226,7 @@ export function buildNumericFactRegistry(insights) {
   const facts = [];
   const seen = new Set();
   const list = Array.isArray(insights) ? insights : [];
-  const push = (id, label, value, kind, source) => {
+  const push = (id, label, value, kind, source, unit = null) => {
     const num = Number(value);
     if (!Number.isFinite(num)) return;
     const forms = new Set(numericSurfaceForms(num));
@@ -238,7 +238,7 @@ export function buildNumericFactRegistry(insights) {
       id,
       label,
       value: num,
-      unit: null,
+      unit,
       kind: NUMERIC_FACT_KINDS.includes(kind) ? kind : 'exact',
       source,
       permittedForms: [...forms].sort(),
@@ -259,19 +259,29 @@ export function buildNumericFactRegistry(insights) {
       push(`${base}.metric.rankValue`, 'rank value', insight.metric.rankValue, 'exact', 'performanceAttribution.getAttribution');
     }
 
-    // Changes the deterministic layer already computed (degradation windows).
-    // These are `derived` precisely so the model is not doing the subtraction.
-    const metrics = Array.isArray(insight.metric?.metrics) ? insight.metric.metrics : [];
-    for (const m of metrics) {
-      if (!m || typeof m !== 'object') continue;
-      if (Number.isFinite(Number(m.change))) {
-        push(`${base}.change.${text(m.metric) ?? 'metric'}`, `${text(m.metric) ?? 'metric'} change`,
-          m.change, 'derived', 'degradationEngine.metricVerdict');
-      }
-      for (const key of ['historical', 'recent']) {
-        if (Number.isFinite(Number(m[key]))) {
-          push(`${base}.${key}.${text(m.metric) ?? 'metric'}`, `${text(m.metric) ?? 'metric'} ${key}`,
-            m[key], 'exact', 'tradingAnalytics.getCoreMetrics');
+    // Authoritative facts preserved across the consolidation boundary. These
+    // were already computed upstream; nothing here is recalculated. The raw
+    // `metric` path is kept as a fallback for un-normalized producers.
+    const carried = Array.isArray(insight.permittedFacts?.numeric) ? insight.permittedFacts.numeric : [];
+    for (const f of carried) {
+      if (!f || typeof f !== 'object') continue;
+      const label = text(f.metric);
+      if (label === null) continue;
+      push(`${base}.${label}`, label, f.value, f.kind, f.source, f.unit ?? null);
+    }
+    if (carried.length === 0) {
+      const metrics = Array.isArray(insight.metric?.metrics) ? insight.metric.metrics : [];
+      for (const m of metrics) {
+        if (!m || typeof m !== 'object') continue;
+        if (Number.isFinite(Number(m.change))) {
+          push(`${base}.change.${text(m.metric) ?? 'metric'}`, `${text(m.metric) ?? 'metric'} change`,
+            m.change, 'derived', 'degradationEngine.metricVerdict');
+        }
+        for (const key of ['historical', 'recent']) {
+          if (Number.isFinite(Number(m[key]))) {
+            push(`${base}.${key}.${text(m.metric) ?? 'metric'}`, `${text(m.metric) ?? 'metric'} ${key}`,
+              m[key], 'exact', 'tradingAnalytics.getCoreMetrics');
+          }
         }
       }
     }
@@ -315,6 +325,47 @@ export function findUngroundedNumbers(textValue, registry) {
     ungrounded.push(token);
   }
   return [...new Set(ungrounded)];
+}
+
+/**
+ * Direction vocabulary. A figure only supports a direction when a cited
+ * derived fact carries that sign: "8" is a legitimate historical profit
+ * factor, but it is not "a decline of 8%".
+ */
+const DECLINE_WORDS = ['fell', 'fall', 'falling', 'decline', 'declined', 'decreasing',
+  'decrease', 'decreased', 'dropped', 'drop', 'lower', 'worse', 'down'];
+const RISE_WORDS = ['rose', 'rise', 'rising', 'increase', 'increased', 'increasing',
+  'grew', 'gain', 'gained', 'higher', 'up'];
+
+export function directionOfClaim(textValue) {
+  const s = String(textValue ?? '').toLowerCase();
+  const down = DECLINE_WORDS.some((w) => new RegExp(`\\b${w}\\b`).test(s));
+  const up = RISE_WORDS.some((w) => new RegExp(`\\b${w}\\b`).test(s));
+  if (down === up) return null;
+  return down ? 'decline' : 'rise';
+}
+
+/**
+ * Metric names a provider may refer to in prose, mapped onto the fact ids
+ * they must correspond to. Without this, a real figure attached to the wrong
+ * metric ("Win rate decreased by 13.88%" citing the profit factor change)
+ * passes every other check.
+ */
+const METRIC_PHRASES = [
+  { phrases: ['win rate', 'winrate', 'win-rate'], prefix: 'winRate' },
+  { phrases: ['average r', 'avg r', 'avgr', 'avg-r'], prefix: 'avgR' },
+  { phrases: ['profit factor', 'profitfactor', 'profit-factor'], prefix: 'profitFactor' },
+  { phrases: ['sample size', 'sample-size'], prefix: 'sample.size' },
+];
+
+/** Metric prefixes the text refers to, if any. */
+export function referencedMetrics(textValue) {
+  const s = String(textValue ?? '').toLowerCase();
+  const found = [];
+  for (const entry of METRIC_PHRASES) {
+    if (entry.phrases.some((p) => s.includes(p))) found.push(entry.prefix);
+  }
+  return found;
 }
 
 function findInstructionPhrases(textValue) {
@@ -450,6 +501,53 @@ function validateGroundedItems(items, label, insightsById, registry, cfg, violat
       violations.push(`${label} entry restates a state no cited insight supports (${unsupportedStates.join(', ')})`);
       continue;
     }
+    // Numbers must be traceable to the facts this entry cites, not merely to
+    // any authorised value. Otherwise a legitimate figure can be re-used in a
+    // role no fact supports: "8" is a historical profit factor, not a fall.
+    const citedFactIds = Array.isArray(item.factIds)
+      ? item.factIds.map((v) => text(v)).filter((v) => v !== null)
+      : [];
+    const citedFacts = citedFactIds
+      .map((fid) => (registry.factsById instanceof Map ? registry.factsById.get(fid) : undefined))
+      .filter((f) => f !== undefined);
+
+    const tokens = String(body).match(/(?<![A-Za-z])-?\d+(?:\.\d+)?/g) || [];
+    if (tokens.length > 0) {
+      if (citedFacts.length === 0) {
+        violations.push(`${label} entry states a figure without citing an authorised fact`);
+        continue;
+      }
+      const covered = new Set(citedFacts.flatMap((f) => f.permittedForms || []));
+      const unattributed = tokens.filter((t) => !covered.has(t));
+      if (unattributed.length > 0) {
+        violations.push(`${label} entry states a figure not covered by the facts it cites (${unattributed.join(', ')})`);
+        continue;
+      }
+      // A named metric must match the cited facts, so a real figure cannot be
+      // attached to a metric it does not describe.
+      const referenced = referencedMetrics(body);
+      if (referenced.length > 0) {
+        const mismatched = citedFacts.filter((f) => !referenced.some((p) => String(f.id).includes(p)));
+        if (mismatched.length > 0) {
+          violations.push(`${label} entry names a metric its cited facts do not cover (${mismatched.map((f) => f.id).join(', ')})`);
+          continue;
+        }
+      }
+      // A direction claim needs a derived fact carrying that sign.
+      const direction = directionOfClaim(body);
+      if (direction !== null) {
+        const signed = citedFacts.some((f) => {
+          if (f.kind !== 'derived') return false;
+          const v = Number(f.value);
+          return direction === 'decline' ? v < 0 : v > 0;
+        });
+        if (!signed) {
+          violations.push(`${label} entry asserts a ${direction} without a cited derived fact showing that sign`);
+          continue;
+        }
+      }
+    }
+
     const fabricated = findUngroundedNumbers(body, registry);
     if (fabricated.length > 0) {
       violations.push(`${label} entry states a figure that is not an authorised fact (${fabricated.join(', ')})`);
@@ -460,6 +558,7 @@ function validateGroundedItems(items, label, insightsById, registry, cfg, violat
       text: body,
       insightIds: citedIds.map(String).sort(),
       groundedOn: claimed ?? weakest,
+      factIds: citedFacts.map((f) => f.id).sort(),
       status: label === 'possibleHypotheses' ? 'unverified' : 'observed',
     });
   }
@@ -508,11 +607,18 @@ export function validateAiResult(result, request, config = {}) {
   const registry = Array.isArray(request.allowedNumericFacts)
     ? {
       facts: request.allowedNumericFacts,
+      factsById: new Map(request.allowedNumericFacts.filter((f) => text(f?.id) !== null).map((f) => [String(f.id), f])),
       allowedTokens: new Set(
         request.allowedNumericFacts.flatMap((f) => (Array.isArray(f?.permittedForms) ? f.permittedForms : [])),
       ),
     }
-    : buildNumericFactRegistry(request.insights);
+    : (() => {
+      const built = buildNumericFactRegistry(request.insights);
+      return {
+        ...built,
+        factsById: new Map(built.facts.map((f) => [f.id, f])),
+      };
+    })();
 
   const summaryText = text(result.summary);
   if (summaryText !== null) {
@@ -594,6 +700,8 @@ export default {
   buildNumericFactRegistry,
   findUngroundedNumbers,
   findUnsupportedStateClaims,
+  directionOfClaim,
+  referencedMetrics,
   buildAiRequest,
   isValidProviderAdapter,
   validateAiResult,

@@ -183,14 +183,20 @@ test('facts: the context drives the contract validator end to end', () => {
   const request = ai.buildAiRequest(c.insights, { enabled: true });
   request.allowedNumericFacts = c.allowedNumericFacts;
   const record = c.insights.find((i) => i.traceability === 'record');
+  const fact = (suffix) => c.allowedNumericFacts.find((x) => x.id.endsWith(suffix))?.id;
 
   const good = ai.validateAiResult({
-    observations: [{ text: 'Win rate was 80.', insightIds: [record.id], groundedOn: 'record' }],
+    observations: [{ text: 'Win rate was 80.', insightIds: [record.id], groundedOn: 'record', factIds: [fact('winRate.historical')] }],
   }, request, { enabled: true });
   ok(good.success, good.violations.join(' | '));
 
+  const decline = ai.validateAiResult({
+    observations: [{ text: 'Win rate decreased by 3.12%.', insightIds: [record.id], groundedOn: 'record', factIds: [fact('winRate.change')] }],
+  }, request, { enabled: true });
+  ok(decline.success, 'the published change is now expressible: ' + decline.violations.join(' | '));
+
   const bad = ai.validateAiResult({
-    observations: [{ text: 'Win rate was 82.', insightIds: [record.id], groundedOn: 'record' }],
+    observations: [{ text: 'Win rate was 82.', insightIds: [record.id], groundedOn: 'record', factIds: [fact('winRate.historical')] }],
   }, request, { enabled: true });
   equal(bad.success, false, 'a figure outside the context is still rejected');
 });
@@ -274,3 +280,59 @@ export async function run() {
   const h = await import('./helpers.js');
   return h.run();
 }
+// ---------- the preserved authoritative change, end to end ----------
+
+test('amendment: the published change is exposed as a derived fact in the context', () => {
+  const c = buildAiContext(fixture());
+  const record = c.insights.find((i) => i.traceability === 'record');
+  const change = record.permittedNumericFacts.find((f) => f.metric === 'winRate.change');
+  ok(change !== undefined, 'the change reaches the context');
+  equal(change.kind, 'derived');
+  equal(change.source, 'degradationEngine.metricVerdict');
+  const published = c.allowedNumericFacts.find((f) => f.id === `${record.id}.winRate.change`);
+  ok(published !== undefined, 'and is published in the fact registry');
+  equal(published.kind, 'derived');
+  equal(published.value, change.value);
+  ok(record.permittedFactIds.includes(`${record.id}.winRate.change`), 'listed as a permitted fact');
+});
+
+test('amendment: the exact published change is accepted and a rounded one is refused', () => {
+  const c = buildAiContext(fixture());
+  const request = ai.buildAiRequest(c.insights, { enabled: true });
+  request.allowedNumericFacts = c.allowedNumericFacts;
+  const record = c.insights.find((i) => i.traceability === 'record');
+  const change = c.allowedNumericFacts.find((f) => f.id === `${record.id}.winRate.change`);
+  const exact = change.permittedForms.find((f) => f.includes('.') && !f.startsWith('0.')) ?? change.value;
+
+  const good = ai.validateAiResult({
+    observations: [{
+      text: `Win rate decreased by ${change.value < 0 ? '' : ''}${Math.abs(Number(exact))}.`,
+      insightIds: [record.id], groundedOn: 'record', factIds: [change.id],
+    }],
+  }, request, { enabled: true });
+  ok(good.success, 'the published change is usable: ' + good.violations.join(' | '));
+
+  const rounded = ai.validateAiResult({
+    observations: [{ text: 'Win rate decreased by 3.1%.', insightIds: [record.id], groundedOn: 'record', factIds: [change.id] }],
+  }, request, { enabled: true });
+  equal(rounded.success, false, 'a rounded variant is still refused');
+});
+
+test('amendment: non-degradation insights expose no degradation facts in the context', () => {
+  const c = buildAiContext(fixture());
+  for (const i of c.insights) {
+    if (i.source === 'degradationEngine') continue;
+    deepEqual(i.permittedNumericFacts, [], `${i.source} carries none`);
+    for (const id of i.permittedFactIds) {
+      ok(!/\.(winRate|avgR|profitFactor)\./.test(id), `${id} is not a degradation metric`);
+    }
+  }
+});
+
+test('amendment: the context remains provider-agnostic and deterministic', () => {
+  const insights = fixture();
+  deepEqual(buildAiContext(insights), buildAiContext(insights));
+  const code = readFileSync(CODE, 'utf8');
+  ok(!/provider|openai|anthropic|fetch/i.test(code.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')),
+    'no provider-specific logic in the context builder');
+});

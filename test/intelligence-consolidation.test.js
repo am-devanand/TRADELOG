@@ -22,7 +22,7 @@ const {
   groupInsights,
 } = cons;
 
-const CODE = new URL('../src/js/utils/intelligenceConsolidation.js', import.meta.url);
+const CODE = new URL("../src/js/utils/intelligenceConsolidation.js", import.meta.url);
 
 let clock = 0;
 function tradeRow({ id, outcome, strategyId = 'S1', pair = 'EUR/USD', session = 'London' }) {
@@ -355,9 +355,12 @@ test('structural: the consolidation module contains no metric mathematics', () =
     .replace(/'(?:[^'\\]|\\.)*'/g, "''")
     .replace(/"(?:[^"\\]|\\.)*"/g, '""')
     .replace(/`(?:[^`\\]|\\.)*`/g, '``');
-  for (const forbidden of ['getCoreMetrics', 'profitFactor', 'totalPnl', 'getTradeDataset', 'getCompletedReviews']) {
+  for (const forbidden of ['getCoreMetrics', 'totalPnl', 'getTradeDataset', 'getCompletedReviews']) {
     ok(!code.includes(forbidden), `must not reference ${forbidden}`);
   }
+  // Metric names appear only as display-unit labels; what must not exist is
+  // arithmetic over them.
+  ok(!/winRate\s*[-+*/]/.test(code), 'no arithmetic on a metric name');
 });
 
 test('structural: the consolidation module imports no producer engine', () => {
@@ -483,3 +486,93 @@ export async function run() {
   const h = await import('./helpers.js');
   return h.run();
 }
+// ---------- permittedFacts: authoritative values preserved across the boundary ----------
+
+test('permittedFacts: degradation metric changes survive canonical normalization', () => {
+  const rows = [];
+  for (let i = 0; i < 40; i++) rows.push(tradeRow({ id: `pf-w-${i}`, strategyId: 'S', outcome: i < 32 ? 'WIN' : 'LOSS' }));
+  for (let i = 0; i < 40; i++) rows.push(tradeRow({ id: `pf-r-${i}`, strategyId: 'S', outcome: i < 31 ? 'WIN' : 'LOSS' }));
+
+  const raw = degradation.detectDegradation(rows, { dimension: 'strategy' })[0];
+  const n = normalizeDegradationInsight(raw);
+
+  const change = n.permittedFacts.numeric.find((f) => f.metric === 'winRate.change');
+  ok(change !== undefined, 'the change is carried through');
+  const upstream = raw.metric.metrics.find((m) => m.metric === 'winRate');
+  equal(change.value, upstream.change, 'value is copied verbatim from the engine, not recomputed');
+  equal(change.kind, 'derived');
+  equal(change.unit, 'percent');
+  equal(change.source, 'degradationEngine.metricVerdict');
+});
+
+test('permittedFacts: the endpoints the change came from are carried as exact facts', () => {
+  const rows = [];
+  for (let i = 0; i < 40; i++) rows.push(tradeRow({ id: `pf2-w-${i}`, strategyId: 'S', outcome: i < 32 ? 'WIN' : 'LOSS' }));
+  for (let i = 0; i < 40; i++) rows.push(tradeRow({ id: `pf2-r-${i}`, strategyId: 'S', outcome: i < 31 ? 'WIN' : 'LOSS' }));
+  const n = normalizeDegradationInsight(degradation.detectDegradation(rows, { dimension: 'strategy' })[0]);
+  const hist = n.permittedFacts.numeric.find((f) => f.metric === 'winRate.historical');
+  const recent = n.permittedFacts.numeric.find((f) => f.metric === 'winRate.recent');
+  equal(hist.kind, 'exact');
+  equal(recent.kind, 'exact');
+  equal(hist.value, 80);
+  equal(recent.value, 77.5);
+});
+
+test('permittedFacts: every carried fact has full provenance', () => {
+  for (const i of consolidated()) {
+    ok(Array.isArray(i.permittedFacts.numeric), 'array present on every insight');
+    for (const f of i.permittedFacts.numeric) {
+      ok(typeof f.metric === 'string' && f.metric.length > 0, 'metric named');
+      ok(Number.isFinite(Number(f.value)), 'value is finite');
+      ok(f.kind === 'exact' || f.kind === 'derived', 'kind is controlled');
+      ok(typeof f.source === 'string' && f.source.length > 0, 'source attributed');
+    }
+  }
+});
+
+test('permittedFacts: non-degradation insights carry none', () => {
+  const merged = consolidated();
+  for (const i of merged) {
+    if (i.source !== 'degradationEngine') {
+      deepEqual(i.permittedFacts.numeric, [], `${i.source} exposes no degradation facts`);
+    }
+  }
+  ok(merged.some((i) => i.source === 'degradationEngine' && i.permittedFacts.numeric.length > 0),
+    'degradation does expose facts');
+});
+
+test('permittedFacts: output stays deterministic and existing fields are untouched', () => {
+  const out = realOutputs();
+  const before = normalizeDegradationInsight(out.degradation[0]);
+  const after = normalizeDegradationInsight(out.degradation[0]);
+  deepEqual(after, before, 'normalization is deterministic');
+
+  // The amendment adds one field and removes or renames none.
+  const required = ['id', 'category', 'source', 'title', 'state', 'sourceState', 'summary',
+    'whySurfaced', 'evidence', 'traceability', 'hasRecordEvidence', 'sample', 'ranking',
+    'investigationQuestion', 'provenance', 'entity', 'dimension', 'window', 'permittedFacts'];
+  for (const key of required) ok(key in after, `${key} still present`);
+  equal(Object.keys(after).length, required.length, 'no field was added or dropped beyond the amendment');
+});
+
+test('permittedFacts: no metric calculation was introduced here', () => {
+  const code = readFileSync(CODE, 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '')
+    .replace(/'(?:[^'\\]|\\.)*'/g, "''")
+    .replace(/"(?:[^"\\]|\\.)*"/g, '""');
+  // An arithmetic operator applied to window endpoints would be a new metric.
+  ok(!/historical\s*[-*/]\s*recent/.test(code), 'no difference computed from the endpoints');
+  ok(!/Math\.(round|floor|abs)\([^)]*(change|historical|recent)/.test(code),
+    'no rounding applied to a carried fact value');
+  ok(!/minimumSample\s*:\s*\d+/.test(code), 'no threshold redefinition');
+});
+
+test('permittedFacts: a degradation insight without metrics yields no facts rather than throwing', () => {
+  const n = normalizeDegradationInsight({
+    id: 'x', category: 'DEGRADATION', title: 'T', evidence: 'Observed alongside 20 trades.',
+    sampleSize: 20, metric: { state: 'DEGRADING' },
+  });
+  ok(n !== null);
+  deepEqual(n.permittedFacts.numeric, []);
+});
