@@ -73,6 +73,16 @@ const PROMPT_PREAMBLE = [
   '- Do not infer a ranking from ranking.eligible. That flag only means the sample was large enough to rank.',
   '- Only ranking.label represents an actual rank.',
   '',
+  'Field rules:',
+  '- groundedOn must be exactly one of: record, aggregate, pattern. It is a single word.',
+  '- Never put fact ids in groundedOn. Facts go in factIds only.',
+  '- insightIds must list at least one id taken from the Findings section below. An empty list is invalid.',
+  '',
+  'Length:',
+  '- At most 3 observations, 3 questions and 2 hypotheses.',
+  '- Keep each text under 40 words. Do not restate the findings; interpret them.',
+  '- Output must be one complete JSON object that closes. Never leave it unfinished.',
+  '',
   'Evidence:',
   '- record evidence may discuss the cited records; aggregate evidence supports aggregate statements only; pattern evidence supports pattern statements only.',
   '- Never present a pattern or aggregate finding as if you had inspected individual trades.',
@@ -106,7 +116,7 @@ export function buildPrompt(context) {
   lines.push('');
   lines.push('Permitted numeric facts:');
   for (const fact of Array.isArray(context.allowedNumericFacts) ? context.allowedNumericFacts : []) {
-    lines.push(`- id=${fact.id} value=${fact.value} kind=${fact.kind} unit=${fact.unit ?? 'none'} (${fact.source})`);
+    lines.push(`- ${fact.id} = ${fact.value}${fact.unit ? ' ' + fact.unit : ''}`);
   }
   lines.push('');
   lines.push('Findings:');
