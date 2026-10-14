@@ -62,6 +62,33 @@ async function loadEngines() {
   enginesUnavailable = !engineMod && !rulesMod;
 }
 
+// The modal edits display-named rules (profitTarget) while propRules stores
+// canonical ids (profit_target) under canonical field names (limit,
+// warningThreshold, criticalThreshold). Both read and write go through this
+// table so the editor cannot drift from the store it persists to.
+const PROP_RULE_BINDINGS = [
+  { uiKey: 'profitTarget', ruleId: 'profit_target', limitField: 'target', thresholds: true },
+  { uiKey: 'dailyLoss', ruleId: 'daily_loss', limitField: 'limit', thresholds: true },
+  { uiKey: 'maxDrawdown', ruleId: 'max_drawdown', limitField: 'limit', thresholds: true },
+  { uiKey: 'tradingDays', ruleId: 'min_trading_days', limitField: 'required', thresholds: false },
+  { uiKey: 'consistency', ruleId: 'consistency', limitField: 'limitPct', thresholds: false },
+];
+
+// Translates one edited form block into propRules' update payload, dropping
+// anything the form left blank so a partial edit never blanks a stored rule.
+function canonicalRuleUpdate(binding, formValues) {
+  const out = {};
+  if (!formValues) return out;
+  const limit = formValues[binding.limitField];
+  if (Number.isFinite(limit)) out.limit = limit;
+  if (binding.thresholds) {
+    if (Number.isFinite(formValues.warningPct)) out.warningThreshold = formValues.warningPct;
+    if (Number.isFinite(formValues.criticalPct)) out.criticalThreshold = formValues.criticalPct;
+  }
+  if (typeof formValues.enabled === 'boolean') out.enabled = formValues.enabled;
+  return out;
+}
+
 function callFirst(mod, names, argsList) {
   if (!mod) return undefined;
   for (const name of names) {
@@ -156,14 +183,13 @@ function readLocalConfig(user, accountId, account) {
 
 function resolveConfig(user, account) {
   const accountId = account?.id;
-  // Prefer the prop engine's config when present.
   if (rulesMod) {
-    const fromEngine = callFirst(rulesMod, ['getPropConfig', 'getPropRules'], [
-      [user, accountId],
-      [accountId],
-      [user],
-    ]);
-    const cfg = normalizeEngineConfig(fromEngine) || normalizeEngineConfig(rulesMod?.defaultPropRules);
+    // getPropConfig(accountId, user) — accountId first. getPropConfig always
+    // returns a config object (never undefined), so probing user-first silently
+    // loaded a different account's defaults and made saved values unreadable.
+    const getFn = rulesMod.getPropConfig ?? rulesMod.default?.getPropConfig;
+    const fromEngine = typeof getFn === 'function' ? getFn(accountId, user) : undefined;
+    const cfg = normalizeEngineConfig(fromEngine);
     if (cfg) return { config: { ...defaultLocalConfig(account), ...cfg }, isDefault: false };
     // Engine present but no config stored for this account.
     return { config: defaultLocalConfig(account), isDefault: true };
@@ -184,50 +210,56 @@ function normalizeEngineConfig(raw) {
     }
     return undefined;
   };
+  // getPropConfig returns { accountId, startingBalance, rules: [...] }. Index
+  // those canonical rules by id so the lookups below resolve against the real
+  // store instead of always falling through to the defaults.
+  const cfg = Array.isArray(raw.rules)
+    ? raw.rules.reduce((acc, r) => (r && r.id ? { ...acc, [String(r.id)]: r } : acc), {})
+    : raw;
   const out = {};
-  const pt = raw.profitTarget ?? raw.profit_target ?? raw.target;
+  const pt = cfg.profitTarget ?? cfg.profit_target ?? cfg.target;
   if (pt !== undefined) {
     const o = typeof pt === 'object' ? pt : { target: pt };
     out.profitTarget = {
       id: 'profitTarget', name: 'Profit Target',
       target: numOrUndef(pick(o, ['target', 'limit', 'value'])) ?? 0,
-      warningPct: numOrUndef(pick(o, ['warningPct', 'warning', 'warnAt'])) ?? 70,
-      criticalPct: numOrUndef(pick(o, ['criticalPct', 'critical', 'critAt'])) ?? 90,
+      warningPct: numOrUndef(pick(o, ['warningPct', 'warningThreshold', 'warning', 'warnAt'])) ?? 70,
+      criticalPct: numOrUndef(pick(o, ['criticalPct', 'criticalThreshold', 'critical', 'critAt'])) ?? 90,
       enabled: o.enabled !== false,
     };
   }
-  const dl = raw.dailyLoss ?? raw.daily_loss ?? raw.daily;
+  const dl = cfg.dailyLoss ?? cfg.daily_loss ?? cfg.daily;
   if (dl !== undefined) {
     const o = typeof dl === 'object' ? dl : { limit: dl };
     out.dailyLoss = {
       id: 'dailyLoss', name: 'Daily Loss',
       limit: numOrUndef(pick(o, ['limit', 'maxLoss', 'value'])) ?? 0,
-      warningPct: numOrUndef(pick(o, ['warningPct', 'warning', 'warnAt'])) ?? 70,
-      criticalPct: numOrUndef(pick(o, ['criticalPct', 'critical', 'critAt'])) ?? 90,
+      warningPct: numOrUndef(pick(o, ['warningPct', 'warningThreshold', 'warning', 'warnAt'])) ?? 70,
+      criticalPct: numOrUndef(pick(o, ['criticalPct', 'criticalThreshold', 'critical', 'critAt'])) ?? 90,
       enabled: o.enabled !== false,
     };
   }
-  const md = raw.maxDrawdown ?? raw.max_drawdown ?? raw.drawdown;
+  const md = cfg.maxDrawdown ?? cfg.max_drawdown ?? cfg.drawdown;
   if (md !== undefined) {
     const o = typeof md === 'object' ? md : { limit: md };
     out.maxDrawdown = {
       id: 'maxDrawdown', name: 'Max Drawdown',
       limit: numOrUndef(pick(o, ['limit', 'maxDrawdown', 'value'])) ?? 0,
-      warningPct: numOrUndef(pick(o, ['warningPct', 'warning', 'warnAt'])) ?? 70,
-      criticalPct: numOrUndef(pick(o, ['criticalPct', 'critical', 'critAt'])) ?? 90,
+      warningPct: numOrUndef(pick(o, ['warningPct', 'warningThreshold', 'warning', 'warnAt'])) ?? 70,
+      criticalPct: numOrUndef(pick(o, ['criticalPct', 'criticalThreshold', 'critical', 'critAt'])) ?? 90,
       enabled: o.enabled !== false,
     };
   }
-  const td = raw.tradingDays ?? raw.trading_days ?? raw.minDays;
+  const td = cfg.tradingDays ?? cfg.trading_days ?? cfg.min_trading_days ?? cfg.minDays;
   if (td !== undefined) {
     const o = typeof td === 'object' ? td : { required: td };
     out.tradingDays = {
       id: 'tradingDays', name: 'Trading Days',
-      required: numOrUndef(pick(o, ['required', 'minDays', 'value'])) ?? 10,
+      required: numOrUndef(pick(o, ['required', 'limit', 'minDays', 'value'])) ?? 10,
       enabled: o.enabled !== false,
     };
   }
-  const cs = raw.consistency;
+  const cs = cfg.consistency;
   if (cs !== undefined) {
     const o = typeof cs === 'object' ? cs : { limitPct: cs };
     out.consistency = {
@@ -433,8 +465,11 @@ export function renderProp() {
   bindNavbar();
   if (!propBound) {
     propBound = true;
-    document.getElementById('app')?.addEventListener('click', onPropClick);
-    document.getElementById('app')?.addEventListener('change', onPropChange);
+    // Delegated on the document root, NOT #app: the editor modal is injected
+    // into #modal-overlay, a sibling of #app, so clicks on Save / Cancel /
+    // Close / Reset bubble overlay -> body -> html and never through #app.
+    document.documentElement?.addEventListener('click', onPropClick);
+    document.documentElement?.addEventListener('change', onPropChange);
   }
   void refreshProp();
 }
@@ -659,7 +694,7 @@ async function openEditModal() {
     <div class="prop-edit-row" data-rule="${escapeHtml(ruleKey)}">
       <h4>${escapeHtml(title)}</h4>
       <div class="prop-edit-grid">
-        ${numField(ruleKey, limitField, limitLabel, limitValue)}
+        ${limitField ? numField(ruleKey, limitField, limitLabel, limitValue) : ''}
         ${ruleKey === 'tradingDays' ? '' : numField(ruleKey, 'warningPct', 'Warning %', cfg?.warningPct ?? 70)}
         ${ruleKey === 'tradingDays' || ruleKey === 'consistency' ? '' : numField(ruleKey, 'criticalPct', 'Critical %', cfg?.criticalPct ?? 90)}
         ${ruleKey === 'consistency' ? numField(ruleKey, 'limitPct', 'Limit %', cfg?.limitPct ?? 30) : ''}
@@ -679,7 +714,7 @@ async function openEditModal() {
     ${ruleBlock('dailyLoss', 'Daily Loss', config.dailyLoss, 'Limit $', 'limit', config.dailyLoss?.limit)}
     ${ruleBlock('maxDrawdown', 'Max Drawdown', config.maxDrawdown, 'Limit $', 'limit', config.maxDrawdown?.limit)}
     ${ruleBlock('tradingDays', 'Trading Days', config.tradingDays, 'Required days', 'required', config.tradingDays?.required)}
-    ${ruleBlock('consistency', 'Consistency', config.consistency, 'Limit %', 'limitPct', config.consistency?.limitPct)}
+    ${ruleBlock('consistency', 'Consistency', config.consistency, 'Limit %', '', config.consistency?.limitPct)}
     <div class="form-actions">
       <button type="button" class="btn btn-ghost btn-sm" id="prop-reset-defaults">RESET TO DEFAULTS</button>
       <button type="button" class="btn btn-secondary" id="prop-edit-cancel">Cancel</button>
@@ -724,21 +759,17 @@ async function saveConfig() {
 
   if (rulesMod && typeof (rulesMod.updatePropRule ?? rulesMod.default?.updatePropRule) === 'function') {
     const updateFn = rulesMod.updatePropRule ?? rulesMod.default.updatePropRule;
-    let ok = true;
-    for (const [ruleId, updates] of Object.entries(edits)) {
-      const clean = cleanUpdates(updates);
-      let saved = false;
-      for (const args of [[user, accountId, ruleId, clean], [accountId, ruleId, clean], [ruleId, clean]]) {
-        try {
-          const r = updateFn(...args);
-          if (r && typeof r.then === 'function') await r;
-          saved = true;
-          break;
-        } catch { /* next signature */ }
+    // updatePropRule(accountId, ruleId, updates, user) — accountId first. The
+    // previous probe order passed user first, which neither threw nor wrote:
+    // it stored a bogus rule lookup under the username, then reported success.
+    for (const binding of PROP_RULE_BINDINGS) {
+      const updates = canonicalRuleUpdate(binding, edits[binding.uiKey]);
+      if (!Object.keys(updates).length) continue;
+      const r = await updateFn(accountId, binding.ruleId, updates, user);
+      if (!r || r.success !== true) {
+        return showToast((r && r.error) || 'Could not save prop rules', 'error');
       }
-      if (!saved) ok = false;
     }
-    if (!ok) return showToast('Some rules could not be saved', 'error');
   } else {
     // Local fallback persistence (separate key — never touches balances).
     try {
@@ -768,16 +799,10 @@ async function resetConfig() {
 
   if (rulesMod && typeof (rulesMod.resetPropConfig ?? rulesMod.default?.resetPropConfig) === 'function') {
     const resetFn = rulesMod.resetPropConfig ?? rulesMod.default.resetPropConfig;
-    let done = false;
-    for (const args of [[user, accountId], [accountId], [user]]) {
-      try {
-        const r = resetFn(...args);
-        if (r && typeof r.then === 'function') await r;
-        done = true;
-        break;
-      } catch { /* next signature */ }
-    }
-    if (!done) return showToast('Could not reset prop config', 'error');
+    // resetPropConfig(accountId, user). Passing user first reset an account
+    // literally named after the username and left the real account untouched.
+    const r = await resetFn(accountId, user);
+    if (!r || r.success !== true) return showToast((r && r.error) || 'Could not reset prop config', 'error');
   } else {
     try { localStorage.removeItem(propCfgKey(user, accountId)); } catch { /* offline-safe */ }
   }
