@@ -347,7 +347,11 @@ export function getTradeDataset(accountId, filters = {}) {
     const k = String(r.tradeId);
     if (!byTrade.has(k)) byTrade.set(k, r);
   }
-  const filtered = filterTrades(trades, { ...f, accountId: effAccount });
+  // The COMPLETED-review join above is the review-status source of truth:
+  // without it every trade resolves flag null and REVIEWED/UNREVIEWED pass
+  // everything through. Keys are trade ids holding a qualifying completed
+  // review; callers selecting ALL are unaffected (reviewNorm short-circuits).
+  const filtered = filterTrades(trades, { ...f, accountId: effAccount, reviewedTradeIds: [...byTrade.keys()] });
   const rows = [];
   for (const item of filtered) {
     const trade = isDatasetRow(item) ? item.trade : item;
