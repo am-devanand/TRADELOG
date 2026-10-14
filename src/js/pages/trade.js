@@ -59,11 +59,13 @@ function auditSetupWrite(user, setupId, isNew, oldStatus, newStatus) {
   }
 }
 
-// ---- Optional Phase-shared decision card (inline fallback when absent) ----
-// @vite-ignore keeps the bundler from failing when the file doesn't exist.
+// ---- Phase-shared decision card ----
+// Never re-add @vite-ignore: it left the specifier untouched, so the browser
+// resolved it against the built chunk URL, 404'd in production, and permanently
+// selected the inline renderer. The catch stays as a last-resort guard.
 let externalDecisionCard = null;
 try {
-  import(/* @vite-ignore */ '../components/decisionCard.js')
+  import('../components/decisionCard.js')
     .then((m) => {
       if (m && typeof m.renderDecisionCard === 'function') externalDecisionCard = m.renderDecisionCard;
     })
@@ -324,14 +326,17 @@ let tradeFilter = 'ALL'; // ALL | OPEN | CLOSED — executed-trades visibility o
 let tradeDashboardBound = false;
 
 // ---- Executed trades (storage-backed; API-compatible with utils/executedTrades.js)
-// Optional Phase 4 module shape (when present):
+// Canonical Phase 4 readers:
 //   getOpenTrades(user) / getClosedTrades(user) over OPEN/PARTIALLY_CLOSED/CLOSED.
 // This file must not change execution/close APIs, so it only READS here and
-// persists closes via storage.updateTrade. If utils/executedTrades.js ever
-// lands, its readers are preferred via lazy override below.
+// persists closes via storage.updateTrade. utils/executedTrades.js HAS landed,
+// so this import must stay statically resolvable: under @vite-ignore the
+// browser resolved the untouched specifier against the built chunk URL, 404'd,
+// and silently fell through to the storage.js scan (tradelog_trades_{folderId})
+// instead of the canonical store (tradelog_exectrades_{user}).
 let externalExecutedReaders = null;
 try {
-  import(/* @vite-ignore */ '../utils/executedTrades.js')
+  import('../utils/executedTrades.js')
     .then((m) => {
       if (m && (typeof m.getOpenTrades === 'function' || typeof m.getClosedTrades === 'function')) {
         externalExecutedReaders = m;
@@ -878,11 +883,12 @@ function setupCardHtml(s) {
   `;
 }
 
-// Inline close flow: prefers a shared close modal from tradeDetail when it
-// exists, otherwise navigates to the detail route for the full close flow.
+// Prefers the shared close modal from tradeDetail (already statically imported
+// by main.js). Keep this specifier resolvable — @vite-ignore made it resolve
+// against the built chunk URL and 404 in production.
 async function openCloseTradeModal(user, folderId, tradeId) {
   try {
-    const mod = await import(/* @vite-ignore */ '../pages/tradeDetail.js');
+    const mod = await import('../pages/tradeDetail.js');
     if (mod && typeof mod.openCloseModal === 'function') {
       mod.openCloseModal(user, folderId, tradeId, () => refreshTradeLists(user));
       return;

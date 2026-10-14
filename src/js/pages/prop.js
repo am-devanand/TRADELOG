@@ -2,9 +2,9 @@
 // Prop dashboard — /prop
 // Vanilla ESM, reuses .card/.badge/.btn/.stat-card/.progress from base.css.
 // READ-ONLY over accounts: never writes balances/trades. Prop config edits
-// persist via propRules.updatePropRule/resetPropConfig (or a localStorage
-// fallback key when the engine modules are absent). Engine imports are
-// dynamic with @vite-ignore so build+runtime never crash when absent.
+// persist via propRules.updatePropRule/resetPropConfig. The engine imports
+// below are dynamic so the dashboard stays lazy, but their specifiers must
+// stay statically resolvable for the bundler.
 // ============================================
 import '../../css/prop.css';
 import { getCurrentUser, getFolders, getTrades } from '../utils/storage.js';
@@ -40,7 +40,11 @@ import { renderDrawdownMeter } from '../components/prop/drawdownMeter.js';
 import { renderConsistencyCard } from '../components/prop/consistencyCard.js';
 import { statusBadge, normalizeStatus, fmtMoney } from '../components/prop/propStatus.js';
 
-// ---- Defensive engine loading (modules may not exist yet) ----
+// ---- Defensive engine loading ----
+// propEngine.js and propRules.js HAVE landed (Phase 6), so these must stay
+// statically resolvable. Under @vite-ignore they resolved against the built
+// chunk URL and 404'd in production, so every render took the "engine
+// unavailable" branch and rule edits went to a key syncManager never reads.
 let engineMod = null;
 let rulesMod = null;
 let enginesChecked = false;
@@ -50,10 +54,10 @@ async function loadEngines() {
   if (enginesChecked) return;
   enginesChecked = true;
   try {
-    engineMod = await import(/* @vite-ignore */ '../utils/propEngine.js');
+    engineMod = await import('../utils/propEngine.js');
   } catch { engineMod = null; }
   try {
-    rulesMod = await import(/* @vite-ignore */ '../utils/propRules.js');
+    rulesMod = await import('../utils/propRules.js');
   } catch { rulesMod = null; }
   enginesUnavailable = !engineMod && !rulesMod;
 }
