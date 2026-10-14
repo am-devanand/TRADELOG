@@ -137,11 +137,31 @@ function writeSetups(user, list) {
   if (typeof localStorage === 'undefined') return;
   localStorage.setItem(setupsKey(user), JSON.stringify(list));
 }
-function saveSetup(user, setup) {
-  const list = getSetups(user);
-  list.push(setup);
-  writeSetups(user, list);
-  return setup;
+// Idempotent setup persistence keyed by the stable setup id: repeated saves
+// of the same analysis update one row instead of appending duplicates. The
+// insert-on-missing branch is the documented save path (a complete fresh
+// record under a stable id), not a silent fallback for a failed update.
+// Returns a result object and never throws, so callers gate toasts,
+// navigation, and execution on it — including storage-quota failures.
+function upsertSetup(user, record) {
+  try {
+    const id = String(record?.id ?? '');
+    if (!id) return { success: false, error: 'Setup id is required' };
+    const list = getSetups(user);
+    const idx = list.findIndex((s) => s && String(s.id) === id);
+    const row = { ...record, updatedAt: new Date().toISOString() };
+    let created = false;
+    if (idx === -1) {
+      list.push(row);
+      created = true;
+    } else {
+      list[idx] = { ...list[idx], ...row };
+    }
+    writeSetups(user, list);
+    return { success: true, created };
+  } catch (e) {
+    return { success: false, error: e?.message || 'Could not save setup' };
+  }
 }
 function updateSetup(user, id, updates) {
   const list = getSetups(user);
@@ -1617,61 +1637,82 @@ function buildSetupRecord(status) {
   };
 }
 
+// Guards the synchronous save paths below against double processing (rapid
+// double-click, keyboard + mouse firing together). Always reset in a finally
+// block so a failure never wedges the form.
+let persistInFlight = false;
+
 function persistSetup(user, status) {
-  readFormIntoState();
-  recalc(user);
-  if (!analysis.accountId) return showToast('Select an account first', 'error');
-  if (!analysis.pair) return showToast('Select a pair first', 'error');
-  const record = buildSetupRecord(status);
-  const existing = getSetups(user).find((s) => s && String(s.id) === String(analysis.id));
-  if (existing) {
-    const oldStatus = existing.status;
-    updateSetup(user, analysis.id, record);
-    auditSetupWrite(user, analysis.id, false, oldStatus, status);
-  } else {
-    saveSetup(user, record);
-    auditSetupWrite(user, analysis.id, true, '', status);
+  if (persistInFlight) return false;
+  persistInFlight = true;
+  try {
+    readFormIntoState();
+    recalc(user);
+    if (!analysis.accountId) {
+      showToast('Select an account first', 'error');
+      return false;
+    }
+    if (!analysis.pair) {
+      showToast('Select a pair first', 'error');
+      return false;
+    }
+    const record = buildSetupRecord(status);
+    const existing = getSetups(user).find((s) => s && String(s.id) === String(analysis.id));
+    const res = upsertSetup(user, record);
+    if (!res.success) {
+      showToast(res.error || 'Could not save setup', 'error');
+      return false;
+    }
+    auditSetupWrite(user, analysis.id, res.created, existing ? existing.status : '', status);
+    showToast(status === 'WAITING' ? 'Saved as WAITING — reopen it from /trade' : 'Analysis saved!');
+    if (status === 'WAITING') navigate('/trade');
+    return true;
+  } finally {
+    persistInFlight = false;
   }
-  showToast(status === 'WAITING' ? 'Saved as WAITING — reopen it from /trade' : 'Analysis saved!');
-  if (status === 'WAITING') navigate('/trade');
 }
 
 function openEnterTradeModal(user) {
   // READY-only entry: WAITING / NO_TRADE never reach here (no ENTER button rendered).
-  readFormIntoState();
-  recalc(user);
-  const result = lastResult;
-  if (!result || result.decision.state !== 'READY') {
-    showToast('Only READY setups can be executed', 'error');
-    return;
+  if (persistInFlight) return;
+  persistInFlight = true;
+  try {
+    readFormIntoState();
+    recalc(user);
+    const result = lastResult;
+    if (!result || result.decision.state !== 'READY') {
+      showToast('Only READY setups can be executed', 'error');
+      return;
+    }
+    // Persist the READY setup first so executeSetup can mark it ENTERED on success.
+    // Execution never starts unless this write succeeds.
+    const record = buildSetupRecord('READY');
+    const savedExisting = getSetups(user).find((s) => s && String(s.id) === String(analysis.id));
+    const res = upsertSetup(user, record);
+    if (!res.success) {
+      showToast(res.error || 'Could not save setup', 'error');
+      return;
+    }
+    auditSetupWrite(user, analysis.id, res.created, savedExisting ? savedExisting.status : '', 'READY');
+    const saved = getSetups(user).find((s) => s && String(s.id) === String(analysis.id)) || record;
+    openExecutionModal(saved, {
+      user,
+      onConfirm: async (executionData) => {
+        const res = executeSetup(user, saved, executionData);
+        if (!res.success) {
+          // No trade exists, so staged evidence stays keyed to the setup and is
+          // neither deleted nor lost.
+          showToast(res.error || 'Execution failed', 'error');
+          return;
+        }
+        const attached = await attachShotsToTrade(user, saved, res.trade.id);
+        if (!attached.success) showToast(attached.error || 'Screenshots could not be attached', 'error');
+        else if (attached.setupWarning) showToast(attached.setupWarning, 'error');
+        showToast('✓ Trade executed');
+        navigate(`/trade/${res.trade.id}`);
+      },
+    });
+  } finally {
+    persistInFlight = false;
   }
-  // Persist the READY setup first so executeSetup can mark it ENTERED on success.
-  const record = buildSetupRecord('READY');
-  const savedExisting = getSetups(user).find((s) => s && String(s.id) === String(analysis.id));
-  if (savedExisting) {
-    const oldStatus = savedExisting.status;
-    updateSetup(user, analysis.id, record);
-    auditSetupWrite(user, analysis.id, false, oldStatus, 'READY');
-  } else {
-    saveSetup(user, record);
-    auditSetupWrite(user, analysis.id, true, '', 'READY');
-  }
-  const saved = getSetups(user).find((s) => s && String(s.id) === String(analysis.id)) || record;
-  openExecutionModal(saved, {
-    user,
-    onConfirm: async (executionData) => {
-      const res = executeSetup(user, saved, executionData);
-      if (!res.success) {
-        // No trade exists, so staged evidence stays keyed to the setup and is
-        // neither deleted nor lost.
-        showToast(res.error || 'Execution failed', 'error');
-        return;
-      }
-      const attached = await attachShotsToTrade(user, saved, res.trade.id);
-      if (!attached.success) showToast(attached.error || 'Screenshots could not be attached', 'error');
-      else if (attached.setupWarning) showToast(attached.setupWarning, 'error');
-      showToast('✓ Trade executed');
-      navigate(`/trade/${res.trade.id}`);
-    },
-  });
 }
