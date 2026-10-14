@@ -7,7 +7,7 @@
 // ============================================
 import '../../css/analytics.css';
 import '../../css/pagesAnalytics.css';
-import { getCurrentUser } from '../utils/storage.js';
+import { getCurrentUser, getFolders } from '../utils/storage.js';
 import { getClosedTrades } from '../utils/executedTrades.js';
 import { getTradeDataset } from '../utils/tradingAnalytics.js';
 import { getImprovementPatterns } from '../utils/improvementEngine.js';
@@ -78,6 +78,39 @@ function toEngineFilters(f) {
     dateFrom: f.dateFrom || '',
     dateTo: f.dateTo || '',
   };
+}
+
+/**
+ * Accounts for the filter dropdown, from the canonical folder store.
+ * Values are stable account ids; labels are the readable names.
+ */
+function accountOptions(user) {
+  let folders = [];
+  try { folders = getFolders(user) || []; } catch { folders = []; }
+  const seen = new Set();
+  const out = [];
+  for (const f of (Array.isArray(folders) ? folders : [])) {
+    if (!f || f.id == null || String(f.id) === '' || seen.has(String(f.id))) continue;
+    seen.add(String(f.id));
+    out.push({ value: String(f.id), label: String(f.name || f.id) });
+  }
+  return out;
+}
+
+/**
+ * The selected account in the engine's terms: '' means all accounts.
+ * A stored id that no longer exists (deleted folder) falls back to ALL
+ * rather than filtering everything out, and the in-memory filter is aligned
+ * so the dropdown and the dataset agree.
+ */
+function resolvedAccountId(user) {
+  const sel = filters.account && filters.account !== 'ALL' ? String(filters.account) : '';
+  if (!sel) return '';
+  try {
+    if (accountOptions(user).some((a) => a.value === sel)) return sel;
+  } catch { /* fall through to ALL */ }
+  filters.account = 'ALL';
+  return '';
 }
 
 function distinctOptions(user) {
@@ -227,7 +260,8 @@ export function renderImprovements() {
 
   // Patterns are computed from review data in the current filter slice.
   // improvementEngine is read-only; nothing here auto-creates records.
-  const dataset = getTradeDataset(user, { ...toEngineFilters(filters), user });
+  const accountId = resolvedAccountId(user);
+  const dataset = getTradeDataset(accountId, { ...toEngineFilters(filters), user });
   const reviews = dataset.map((r) => r.review).filter((r) => r && typeof r === 'object');
   let patterns = [];
   try {
@@ -254,7 +288,7 @@ export function renderImprovements() {
       </div>
       ${tabsHtml('improvements')}
       <div class="analytics-layout">
-        <div class="analytics-region-filters">${renderAnalyticsFilters({ ...filters, account: filters.account }, options)}</div>
+        <div class="analytics-region-filters">${renderAnalyticsFilters({ ...filters, account: filters.account }, { ...options, accounts: accountOptions(user) })}</div>
         <div class="analytics-content">
           <section aria-label="Observed patterns">
             <h3 class="analytics-section-title">Observed patterns (${escapeHtml(String(patterns.length))})</h3>

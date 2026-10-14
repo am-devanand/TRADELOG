@@ -6,7 +6,7 @@
 // ============================================
 import '../../css/analytics.css';
 import '../../css/pagesAnalytics.css';
-import { getCurrentUser } from '../utils/storage.js';
+import { getCurrentUser, getFolders } from '../utils/storage.js';
 import { getClosedTrades } from '../utils/executedTrades.js';
 import {
   getTradeDataset,
@@ -74,6 +74,39 @@ function toEngineFilters(f) {
     dateFrom: f.dateFrom || '',
     dateTo: f.dateTo || '',
   };
+}
+
+/**
+ * Accounts for the filter dropdown, from the canonical folder store.
+ * Values are stable account ids; labels are the readable names.
+ */
+function accountOptions(user) {
+  let folders = [];
+  try { folders = getFolders(user) || []; } catch { folders = []; }
+  const seen = new Set();
+  const out = [];
+  for (const f of (Array.isArray(folders) ? folders : [])) {
+    if (!f || f.id == null || String(f.id) === '' || seen.has(String(f.id))) continue;
+    seen.add(String(f.id));
+    out.push({ value: String(f.id), label: String(f.name || f.id) });
+  }
+  return out;
+}
+
+/**
+ * The selected account in the engine's terms: '' means all accounts.
+ * A stored id that no longer exists (deleted folder) falls back to ALL
+ * rather than filtering everything out, and the in-memory filter is aligned
+ * so the dropdown and the dataset agree.
+ */
+function resolvedAccountId(user) {
+  const sel = filters.account && filters.account !== 'ALL' ? String(filters.account) : '';
+  if (!sel) return '';
+  try {
+    if (accountOptions(user).some((a) => a.value === sel)) return sel;
+  } catch { /* fall through to ALL */ }
+  filters.account = 'ALL';
+  return '';
 }
 
 function distinctOptions(user) {
@@ -242,7 +275,8 @@ export function renderProcessAnalytics() {
   ensureUser();
   destroyAllCharts();
 
-  const dataset = getTradeDataset(user, { ...toEngineFilters(filters), user });
+  const accountId = resolvedAccountId(user);
+  const dataset = getTradeDataset(accountId, { ...toEngineFilters(filters), user });
   const proc = getProcessStats(dataset);
   const mistakes = getMistakeStats(dataset).filter((m) => m.count > 0);
   const strengths = getStrengthStats(dataset).filter((s) => s.count > 0);
@@ -269,7 +303,7 @@ export function renderProcessAnalytics() {
       </div>
       ${tabsHtml('process')}
       <div class="analytics-layout">
-        <div class="analytics-region-filters">${renderAnalyticsFilters({ ...filters, account: filters.account }, options)}</div>
+        <div class="analytics-region-filters">${renderAnalyticsFilters({ ...filters, account: filters.account }, { ...options, accounts: accountOptions(user) })}</div>
         <div class="analytics-content">
           ${hasReviewed ? '' : '<div class="empty-state"><h3>No reviewed trades yet.</h3><p>Complete a trade review to see process analytics.</p></div>'}
           <div class="analytics-region-summary analytics-summary-grid" aria-label="Process summary">
