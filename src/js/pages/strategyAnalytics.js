@@ -5,7 +5,7 @@
 // ============================================
 import '../../css/analytics.css';
 import '../../css/pagesAnalytics.css';
-import { getCurrentUser } from '../utils/storage.js';
+import { getCurrentUser, getFolders } from '../utils/storage.js';
 import { getClosedTrades } from '../utils/executedTrades.js';
 import {
   getTradeDataset,
@@ -80,6 +80,39 @@ function toEngineFilters(f) {
     dateFrom: f.dateFrom || '',
     dateTo: f.dateTo || '',
   };
+}
+
+/**
+ * Accounts for the filter dropdown, from the canonical folder store.
+ * Values are stable account ids; labels are the readable names.
+ */
+function accountOptions(user) {
+  let folders = [];
+  try { folders = getFolders(user) || []; } catch { folders = []; }
+  const seen = new Set();
+  const out = [];
+  for (const f of (Array.isArray(folders) ? folders : [])) {
+    if (!f || f.id == null || String(f.id) === '' || seen.has(String(f.id))) continue;
+    seen.add(String(f.id));
+    out.push({ value: String(f.id), label: String(f.name || f.id) });
+  }
+  return out;
+}
+
+/**
+ * The selected account in the engine's terms: '' means all accounts.
+ * A stored id that no longer exists (deleted folder) falls back to ALL
+ * rather than filtering everything out, and the in-memory filter is aligned
+ * so the dropdown and the dataset agree.
+ */
+function resolvedAccountId(user) {
+  const sel = filters.account && filters.account !== 'ALL' ? String(filters.account) : '';
+  if (!sel) return '';
+  try {
+    if (accountOptions(user).some((a) => a.value === sel)) return sel;
+  } catch { /* fall through to ALL */ }
+  filters.account = 'ALL';
+  return '';
 }
 
 function distinctOptions(user) {
@@ -240,7 +273,8 @@ export function renderStrategyAnalytics() {
   ensureUser();
   destroyAllCharts();
 
-  const dataset = getTradeDataset(user, { ...toEngineFilters(filters), user });
+  const accountId = resolvedAccountId(user);
+  const dataset = getTradeDataset(accountId, { ...toEngineFilters(filters), user });
   const stats = getAllStrategyStats(dataset);
   const core = getCoreMetrics(dataset);
   const options = distinctOptions(user);
@@ -258,7 +292,7 @@ export function renderStrategyAnalytics() {
       </div>
       ${tabsHtml('strategies')}
       <div class="analytics-layout">
-        <div class="analytics-region-filters">${renderAnalyticsFilters({ ...filters, account: filters.account }, options)}</div>
+        <div class="analytics-region-filters">${renderAnalyticsFilters({ ...filters, account: filters.account }, { ...options, accounts: accountOptions(user) })}</div>
         <div class="analytics-content">
           <div class="analytics-region-summary analytics-summary-grid" aria-label="Overall summary">
             ${renderMetricCard({ label: 'Trades', value: String(core.totalTrades ?? 0), n, sub: 'Closed trades in filter' })}
@@ -274,6 +308,7 @@ export function renderStrategyAnalytics() {
           </div>
           <div class="analytics-region-table card analytics-table-card">
             <h3 class="analytics-section-title">Strategies</h3>
+            <p class="analytics-muted">N counts closed, eligible trades in the current filters — open and simulated trades are never included.</p>
             ${tableHtml(stats)}
           </div>
         </div>
@@ -400,7 +435,8 @@ export function renderStrategyDetail(params = {}) {
   const strategyId = decodeURIComponent(String(rawId));
   if (!strategyId) return navigate('/analytics/strategies');
 
-  const dataset = getTradeDataset(user, { ...toEngineFilters({ ...filters, strategies: [] }), user });
+  const accountId = resolvedAccountId(user);
+  const dataset = getTradeDataset(accountId, { ...toEngineFilters({ ...filters, strategies: [] }), user });
   const matchOf = (t) => String(t.strategyId ?? t.strategy ?? '').trim();
   const stratRows = dataset.filter((row) => matchOf(row.trade) === strategyId);
   const options = distinctOptions(user);
@@ -444,7 +480,7 @@ export function renderStrategyDetail(params = {}) {
       </div>
       ${tabsHtml('strategies')}
       <div class="analytics-layout">
-        <div class="analytics-region-filters">${renderAnalyticsFilters({ ...filters, account: filters.account }, options)}</div>
+        <div class="analytics-region-filters">${renderAnalyticsFilters({ ...filters, account: filters.account }, { ...options, accounts: accountOptions(user) })}</div>
         <div class="analytics-content">
           ${n === 0 ? '<div class="empty-state"><h3>Not enough data for this analysis.</h3><p>No closed trades match this strategy and the current filters.</p></div>' : ''}
           <div class="analytics-region-summary analytics-summary-grid" aria-label="Strategy KPIs">

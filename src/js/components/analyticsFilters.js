@@ -257,8 +257,23 @@ export function renderAnalyticsFilters(currentFilters = {}, options = {}) {
   const timeframes = uniqStrings(options.timeframes);
   const setupTypes = uniqStrings(options.setupTypes ?? options.setups);
   const account = String(f.account ?? 'ALL');
-  const accountOpts = [{ value: 'ALL', label: 'All accounts' }];
-  if (account !== 'ALL' && account !== '') accountOpts.push({ value: account, label: account });
+  // A page may pass options.accounts as [{value,label}] (or plain id strings)
+  // to enumerate its accounts. When absent, the historical ALL-plus-current
+  // behaviour is kept exactly, so pages that do not enumerate are unaffected.
+  const providedAccounts = Array.isArray(options.accounts) ? options.accounts : [];
+const knownAccounts = [];
+const seenAccountValues = new Set(['ALL']);
+for (const entry of providedAccounts) {
+  const value = String((entry && typeof entry === 'object' ? entry.value : entry) ?? '');
+  if (value === '' || seenAccountValues.has(value)) continue;
+  seenAccountValues.add(value);
+  const label = entry && typeof entry === 'object' && entry.label != null && String(entry.label) !== ''
+    ? String(entry.label)
+    : value;
+  knownAccounts.push({ value, label });
+}
+const accountOpts = [{ value: 'ALL', label: 'All accounts' }, ...knownAccounts];
+if (!seenAccountValues.has(account) && account !== '') accountOpts.push({ value: account, label: account });
   const isCustom = String(f.preset).toUpperCase() === 'CUSTOM';
 
   return `
