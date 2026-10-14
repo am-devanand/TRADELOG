@@ -7,7 +7,7 @@
 // ============================================
 import '../../css/trade.css';
 import '../../css/screenshots.css';
-import { getCurrentUser, getFolders, getTrades, updateTrade } from '../utils/storage.js';
+import { getCurrentUser, getFolders, getTrades } from '../utils/storage.js';
 import { DEFAULT_THRESHOLDS } from '../utils/models.js';
 import { getApplicableRules, evaluateRule } from '../utils/ruleManager.js';
 import { evaluateChecklist } from '../utils/decisionEngine.js';
@@ -31,7 +31,7 @@ import { openExecutionModal } from '../components/executionModal.js';
 // Aliased: storage.js also exports updateTrade, but that one writes the legacy
 // tradelog_trades_{folderId} store. Screenshot ids belong on the canonical
 // executed trade in tradelog_exectrades_{user}.
-import { executeSetup, updateTrade as updateCanonicalTrade } from '../utils/executedTrades.js';
+import { executeSetup, updateTrade as updateCanonicalTrade, getExecutedTrade } from '../utils/executedTrades.js';
 import { saveScreenshot, deleteScreenshot, getScreenshot } from '../utils/screenshotStore.js';
 import { listMeta, addMeta, removeMeta } from '../utils/screenshotMeta.js';
 import { renderScreenshotGallery, revokeAllGalleries } from '../components/screenshotViewer.js';
@@ -919,72 +919,20 @@ function setupCardHtml(s) {
 // by main.js). Keep this specifier resolvable — @vite-ignore made it resolve
 // against the built chunk URL and 404 in production.
 async function openCloseTradeModal(user, folderId, tradeId) {
+  // The dashboard closes through the shared modal so validation,
+  // partial-close math and toasts stay on the one canonical path. If the
+  // detail module cannot load, navigate there instead of a legacy fallback:
+  // closing must never silently write a different store.
   try {
     const mod = await import('../pages/tradeDetail.js');
     if (mod && typeof mod.openCloseModal === 'function') {
-      mod.openCloseModal(user, folderId, tradeId, () => refreshTradeLists(user));
+      const trade = getExecutedTrade(user, tradeId);
+      if (!trade) return showToast('Trade not found', 'error');
+      mod.openCloseModal(user, trade, () => refreshTradeLists(user));
       return;
     }
-    if (mod && typeof mod.renderTradeDetail === 'function') {
-      navigate(`/trade/${tradeId}`);
-      return;
-    }
-  } catch { /* no detail module — inline fallback below */ }
-
-  const trades = (() => { try { return getTrades(folderId); } catch { return []; } })();
-  const t = trades.find((x) => x && String(x.id) === String(tradeId));
-  if (!t) return showToast('Trade not found', 'error');
-  const nt = normalizeExecutedTrade(t, folderId);
-  showModal(`
-    <div class="modal-header">
-      <h3 class="modal-title">Close ${escapeHtml(nt.pair)} ${escapeHtml(nt.direction)}</h3>
-      <button class="modal-close" id="modal-close-btn">×</button>
-    </div>
-    <p style="color:var(--text-secondary);margin-bottom:var(--space-md);line-height:1.6;">
-      Entry ${nt.entry !== null ? escapeHtml(fmtNum(nt.entry, 5)) : '—'} ·
-      SL ${nt.sl !== null ? escapeHtml(fmtNum(nt.sl, 5)) : '—'} ·
-      TP ${nt.tp !== null ? escapeHtml(fmtNum(nt.tp, 5)) : '—'}
-    </p>
-    <div class="form-group">
-      <label class="form-label" for="close-exit">Exit price</label>
-      <input type="number" id="close-exit" step="any" placeholder="e.g. ${nt.entry !== null ? escapeHtml(fmtNum(nt.entry, 5)) : '1.0850'}">
-    </div>
-    <div class="form-group">
-      <label class="form-label" for="close-notes">Close notes (optional)</label>
-      <textarea id="close-notes" rows="2" placeholder="Why close now?"></textarea>
-    </div>
-    <div class="form-actions">
-      <button type="button" class="btn btn-secondary" id="close-cancel">Cancel</button>
-      <button type="button" class="btn btn-primary" id="close-manage">MANAGE IN DETAIL</button>
-      <button type="button" class="btn btn-danger" id="close-confirm">CLOSE TRADE</button>
-    </div>
-  `);
-  setTimeout(() => {
-    document.getElementById('modal-close-btn')?.addEventListener('click', hideModal);
-    document.getElementById('close-cancel')?.addEventListener('click', hideModal);
-    document.getElementById('close-manage')?.addEventListener('click', () => {
-      hideModal();
-      navigate(`/trade/${tradeId}`);
-    });
-    document.getElementById('close-confirm')?.addEventListener('click', () => {
-      const exitRaw = document.getElementById('close-exit')?.value ?? '';
-      const notes = (document.getElementById('close-notes')?.value ?? '').trim();
-      const exit = exitRaw === '' ? null : Number(exitRaw);
-      if (exitRaw !== '' && !Number.isFinite(exit)) return showToast('Exit price must be a number', 'error');
-      const now = new Date().toISOString();
-      const updates = { status: 'CLOSED', closedAt: now, updatedAt: now };
-      if (exit !== null) { updates.exitPrice = exit; updates.exit = exit; updates.closePrice = exit; }
-      if (notes) updates.notes = [t.notes, notes].filter(Boolean).join('\n');
-      try {
-        updateTrade(folderId, tradeId, updates);
-      } catch {
-        return showToast('Could not close trade', 'error');
-      }
-      hideModal();
-      showToast('Trade closed');
-      refreshTradeLists(user);
-    });
-  }, 50);
+  } catch { /* fall through to the detail page */ }
+  navigate(`/trade/${tradeId}`);
 }
 
 // ============================================================

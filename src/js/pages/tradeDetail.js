@@ -413,7 +413,13 @@ async function paintShots(user, trade) {
   });
 }
 
-function openCloseModal(user, trade) {
+/**
+ * Shared close modal, also used by the /trade dashboard. onDone runs after a
+ * successful close instead of the local repaint; the dashboard passes a list
+ * refresh. Validation, partial-close math and toasts live here so both
+ * callers share one canonical path.
+ */
+export function openCloseModal(user, trade, onDone) {
   const t = getExecutedTrade(user, trade.id) || trade;
   const remaining = Number(t.remainingLots ?? t.lotSize);
   showModal(`
@@ -486,10 +492,11 @@ function openCloseModal(user, trade) {
       if (!res.success) return showToast(res.error || 'Close failed', 'error');
       hideModal();
       showToast(`Trade closed: ${res.partPL >= 0 ? '+' : ''}${res.partPL} (${res.partR}R)`);
-      paint(user, t);
+      if (typeof onDone === 'function') onDone();
+      else paint(user, t);
     });
     repaint();
   }, 50);
 }
 
-export default { renderTradeDetail };
+export default { renderTradeDetail, openCloseModal };
