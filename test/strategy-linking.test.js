@@ -55,6 +55,8 @@ function makeTradeModule({ strategies = [] } = {}) {
     'getStrategies', 'getStrategy', 'escapeHtml', 'generateId', 'document',
     `const STRATEGY_SUGGESTIONS = ${extractConst('STRATEGY_SUGGESTIONS')};
 let lastResult = null;
+const pendingShotIds = {};
+${extractFunction('stagedShotIds')}
 ${extractFunction('strategyFieldHtml')}
 ${extractFunction('blankAnalysis')}
 ${extractFunction('readFormIntoState')}

@@ -6,6 +6,7 @@
 // Phase 4 (execution) + Phase 5 (screenshots) + Phase 6 intentionally absent.
 // ============================================
 import '../../css/trade.css';
+import '../../css/screenshots.css';
 import { getCurrentUser, getFolders, getTrades, updateTrade } from '../utils/storage.js';
 import { DEFAULT_THRESHOLDS } from '../utils/models.js';
 import { getApplicableRules, evaluateRule } from '../utils/ruleManager.js';
@@ -27,7 +28,13 @@ import {
 } from '../utils/helpers.js';
 import { renderNavbar, bindNavbar } from '../components/navbar.js';
 import { openExecutionModal } from '../components/executionModal.js';
-import { executeSetup } from '../utils/executedTrades.js';
+// Aliased: storage.js also exports updateTrade, but that one writes the legacy
+// tradelog_trades_{folderId} store. Screenshot ids belong on the canonical
+// executed trade in tradelog_exectrades_{user}.
+import { executeSetup, updateTrade as updateCanonicalTrade } from '../utils/executedTrades.js';
+import { saveScreenshot, deleteScreenshot, getScreenshot } from '../utils/screenshotStore.js';
+import { listMeta, addMeta, removeMeta } from '../utils/screenshotMeta.js';
+import { renderScreenshotGallery, revokeAllGalleries } from '../components/screenshotViewer.js';
 import { getStrategies, getStrategy } from '../utils/strategyStore.js';
 import { getReviewByTradeId } from '../utils/tradeReviews.js';
 import { appendAudit } from '../utils/auditLog.js';
@@ -983,6 +990,175 @@ async function openCloseTradeModal(user, folderId, tradeId) {
 // ============================================================
 // /trade/new — analysis form
 // ============================================================
+// ---- Setup screenshots (evidence staged against the setup, not yet a trade) ----
+// Staged ids live here keyed by setup id, mirroring tradeReview's pending map:
+// the blobs are already in IndexedDB but there is no trade yet to attach to.
+// A cancel or a failed execution deliberately leaves them here — they remain
+// the setup's own evidence rather than being deleted.
+const pendingShotIds = {};
+
+function stagedShotIds(setupId) {
+  const list = pendingShotIds[String(setupId || '')];
+  return Array.isArray(list) ? list.map(String) : [];
+}
+
+// A browser can report image/png purely from a file's extension, so a renamed
+// text file arrives claiming to be an image. Sniff the real signature before
+// the blob store is allowed to persist it. SVG is intentionally not accepted:
+// it carries script and has no leading signature.
+const IMAGE_SIGNATURES = [
+  { bytes: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] },
+  { bytes: [0xff, 0xd8, 0xff] },
+  { bytes: [0x47, 0x49, 0x46, 0x38] },
+  { bytes: [0x42, 0x4d] },
+];
+
+async function hasImageSignature(file) {
+  try {
+    const head = new Uint8Array(await file.slice(0, 12).arrayBuffer());
+    const isWebp = head.length >= 12
+      && head[0] === 0x52 && head[1] === 0x49 && head[2] === 0x46 && head[3] === 0x46
+      && String.fromCharCode(head[8], head[9], head[10], head[11]) === 'WEBP';
+    if (isWebp) return true;
+    return IMAGE_SIGNATURES.some((sig) => sig.bytes.every((b, i) => head[i] === b));
+  } catch {
+    return true; // never block a legitimate file we simply could not sniff
+  }
+}
+
+async function handleSetupShotFiles(user, files) {
+  const list = [...(files || [])];
+  if (list.length === 0) return;
+  const setupId = analysis.id;
+  let added = 0;
+  for (const file of list) {
+    if (!(await hasImageSignature(file))) {
+      showToast(`"${file.name || 'file'}" is not a real image file.`, 'error');
+      continue;
+    }
+    const saved = await saveScreenshot(file, { setupId, type: 'ENTRY' });
+    if (!saved.success) {
+      showToast(saved.error || 'Could not save screenshot', 'error');
+      continue;
+    }
+    const mirrored = addMeta(user, saved.meta);
+    if (!mirrored.success) {
+      // Roll the blob back so a failed mirror never orphans image data.
+      await deleteScreenshot(saved.id);
+      showToast(mirrored.error || 'Could not record screenshot', 'error');
+      continue;
+    }
+    pendingShotIds[setupId] = [...stagedShotIds(setupId), String(saved.id)];
+    added += 1;
+  }
+  if (added > 0) {
+    showToast(`${added} screenshot${added > 1 ? 's' : ''} staged on this device`);
+  }
+  const input = document.getElementById('ta-shot-file');
+  if (input) input.value = '';
+  await paintSetupShots(user);
+}
+
+async function paintSetupShots(user) {
+  const box = document.getElementById('ta-shots');
+  if (!box) return;
+  const ids = stagedShotIds(analysis.id);
+  const meta = ids.length > 0 ? listMeta(user, { ids }) : [];
+  const missing = ids.length - meta.length;
+  const err = document.getElementById('ta-shot-err');
+  if (err) {
+    if (missing > 0) {
+      err.hidden = false;
+      err.textContent = `${missing} screenshot${missing > 1 ? 's' : ''} referenced but not on this device (blobs never sync).`;
+    } else {
+      err.hidden = true;
+      err.textContent = '';
+    }
+  }
+  await renderScreenshotGallery(box, meta, {
+    onDelete: async (id) => {
+      const del = await deleteScreenshot(id);
+      if (!del.success) {
+        showToast(del.error || 'Could not delete screenshot', 'error');
+        return;
+      }
+      removeMeta(user, id);
+      pendingShotIds[analysis.id] = stagedShotIds(analysis.id).filter((x) => x !== String(id));
+      // A previously saved setup still lists the removed id; drop it there too.
+      updateSetup(user, analysis.id, { screenshotIds: stagedShotIds(analysis.id) });
+      showToast('Screenshot deleted');
+      await paintSetupShots(user);
+    },
+    onPreviewError: (error) => showToast(error || 'Could not preview screenshot', 'error'),
+  });
+}
+
+function bindSetupShots(user) {
+  const addBtn = document.getElementById('ta-shot-add');
+  const input = document.getElementById('ta-shot-file');
+  if (addBtn && !addBtn.dataset.bound) {
+    addBtn.dataset.bound = '1';
+    addBtn.addEventListener('click', () => input?.click());
+  }
+  if (input && !input.dataset.bound) {
+    input.dataset.bound = '1';
+    input.addEventListener('change', () => {
+      void handleSetupShotFiles(user, input.files);
+    });
+  }
+}
+
+/**
+ * Re-key staged setup evidence onto a freshly executed trade.
+ *
+ * screenshotStore has no update API, so each blob is read back and re-saved
+ * under {tradeId, setupId} — setupId is kept so the provenance back to the
+ * originating setup survives. Only ids that were successfully re-keyed are
+ * written to the trade; anything that fails keeps its original id rather than
+ * dropping evidence. The setup record is rewritten to the new ids so it never
+ * points at deleted records.
+ */
+async function attachShotsToTrade(user, setup, tradeId) {
+  const setupId = String(setup?.id || analysis.id || '');
+  const ids = stagedShotIds(setupId).length > 0 ? stagedShotIds(setupId) : (Array.isArray(setup?.screenshotIds) ? setup.screenshotIds.map(String) : []);
+  if (ids.length === 0) return { success: true, ids: [] };
+  const next = [];
+  for (const id of ids) {
+    const got = await getScreenshot(id);
+    if (!got.success || !got.blob) {
+      // The blob is gone (device cleared); drop the dangling reference.
+      removeMeta(user, id);
+      continue;
+    }
+    const saved = await saveScreenshot(got.blob, {
+      tradeId,
+      setupId,
+      type: got.meta?.type || 'ENTRY',
+      filename: got.meta?.filename,
+    });
+    if (!saved.success) {
+      next.push(id);
+      continue;
+    }
+    const mirrored = addMeta(user, saved.meta);
+    if (!mirrored.success) {
+      await deleteScreenshot(saved.id);
+      next.push(id);
+      continue;
+    }
+    await deleteScreenshot(id);
+    removeMeta(user, id);
+    next.push(String(saved.id));
+  }
+  const up = updateCanonicalTrade(user, tradeId, { screenshotIds: next });
+  if (!up.success) return { success: false, error: up.error, ids: next };
+  if (setupId) {
+    pendingShotIds[setupId] = next;
+    updateSetup(user, setupId, { screenshotIds: next });
+  }
+  return { success: true, ids: next };
+}
+
 export function renderTradeNew() {
   const user = getCurrentUser();
   if (!user) return navigate('/login');
@@ -1014,6 +1190,9 @@ export function renderTradeNew() {
         manualChecks: { ...(saved.checklist || {}) },
         status: saved.status || 'DRAFT',
       };
+      pendingShotIds[saved.id] = Array.isArray(saved.screenshotIds)
+        ? saved.screenshotIds.map(String)
+        : (Array.isArray(saved.market?.screenshotIds) ? saved.market.screenshotIds.map(String) : []);
       // A linked strategy whose name was never persisted (e.g. the strategy
       // was deleted after the setup was saved) still needs a display string.
       if (analysis.strategyId && !analysis.strategy) {
@@ -1123,9 +1302,16 @@ export function renderTradeNew() {
                 <textarea id="ta-notes" rows="2" placeholder="Trade idea, confluence, concerns...">${escapeHtml(analysis.notes)}</textarea>
               </div>
             </div>
-            <div class="shot-placeholder" aria-label="Screenshot placeholder">
-              📷 Screenshot upload — Coming in Phase 5
+          </section>
+
+          <section class="card" aria-label="Screenshots">
+            <div class="trade-section-title"><h2>📎 SCREENSHOTS</h2><p>Stored on this device only — works offline</p></div>
+            <div class="shot-add-row">
+              <button type="button" class="btn btn-secondary btn-sm" id="ta-shot-add">+ ADD SCREENSHOT</button>
+              <input type="file" id="ta-shot-file" accept="image/*" multiple hidden>
             </div>
+            <div id="ta-shots"></div>
+            <div class="shot-err" id="ta-shot-err" role="alert" hidden></div>
           </section>
 
           <section class="card trade-order-risk" aria-label="Risk">
@@ -1156,7 +1342,10 @@ export function renderTradeNew() {
   `;
   bindNavbar();
   document.getElementById('back-trade')?.addEventListener('click', () => navigate('/trade'));
+  revokeAllGalleries();
   bindAnalysisForm(user);
+  bindSetupShots(user);
+  void paintSetupShots(user);
   recalc(user); // initial paint
 }
 
@@ -1380,6 +1569,7 @@ function buildSetupRecord(status) {
     id: analysis.id,
     status,
     strategyId: analysis.strategyId,
+    screenshotIds: stagedShotIds(analysis.id),
     score: r.decision.score,
     state: r.decision.state,
     checklist: { ...analysis.manualChecks },
@@ -1454,12 +1644,16 @@ function openEnterTradeModal(user) {
   const saved = getSetups(user).find((s) => s && String(s.id) === String(analysis.id)) || record;
   openExecutionModal(saved, {
     user,
-    onConfirm: (executionData) => {
+    onConfirm: async (executionData) => {
       const res = executeSetup(user, saved, executionData);
       if (!res.success) {
+        // No trade exists, so staged evidence stays keyed to the setup and is
+        // neither deleted nor lost.
         showToast(res.error || 'Execution failed', 'error');
         return;
       }
+      const attached = await attachShotsToTrade(user, saved, res.trade.id);
+      if (!attached.success) showToast(attached.error || 'Screenshots could not be attached', 'error');
       showToast('✓ Trade executed');
       navigate(`/trade/${res.trade.id}`);
     },
