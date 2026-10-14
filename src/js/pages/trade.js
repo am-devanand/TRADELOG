@@ -31,12 +31,12 @@ import { openExecutionModal } from '../components/executionModal.js';
 // Aliased: storage.js also exports updateTrade, but that one writes the legacy
 // tradelog_trades_{folderId} store. Screenshot ids belong on the canonical
 // executed trade in tradelog_exectrades_{user}.
-import { executeSetup, updateTrade as updateCanonicalTrade, getExecutedTrade } from '../utils/executedTrades.js';
+import { executeSetup, updateTrade as updateCanonicalTrade, getExecutedTrade, getExecutedTrades } from '../utils/executedTrades.js';
 import { saveScreenshot, deleteScreenshot, getScreenshot } from '../utils/screenshotStore.js';
 import { listMeta, addMeta, removeMeta } from '../utils/screenshotMeta.js';
 import { renderScreenshotGallery, revokeAllGalleries } from '../components/screenshotViewer.js';
 import { getStrategies, getStrategy } from '../utils/strategyStore.js';
-import { getReviewByTradeId } from '../utils/tradeReviews.js';
+import { getReviewByTradeId, getReviews } from '../utils/tradeReviews.js';
 import { appendAudit } from '../utils/auditLog.js';
 
 function safeAudit(user, entry) {
@@ -1059,23 +1059,40 @@ function bindSetupShots(user) {
 /**
  * Re-key staged setup evidence onto a freshly executed trade.
  *
- * screenshotStore has no update API, so each blob is read back and re-saved
- * under {tradeId, setupId} — setupId is kept so the provenance back to the
- * originating setup survives. Only ids that were successfully re-keyed are
- * written to the trade; anything that fails keeps its original id rather than
- * dropping evidence. The setup record is rewritten to the new ids so it never
- * points at deleted records.
+ * screenshotStore has no update API and localStorage writes are not atomic,
+ * so this runs as an explicit four-phase sequence with compensation instead
+ * of pretending to be a transaction:
+ *
+ *   1. Copy only. Every staged blob is read back and re-saved under
+ *      {tradeId, setupId} — setupId is kept so provenance back to the
+ *      originating setup survives. Nothing existing is deleted here, so any
+ *      failure below leaves the original evidence exactly as it was. An id
+ *      already linked to this trade (retry after a partial run) is kept
+ *      as-is instead of being copied again.
+ *   2. Link. The trade is updated to the new ids in one call. On failure the
+ *      just-made copies (referenced by nothing yet) are deleted again, the
+ *      originals are untouched, and failure is reported truthfully.
+ *   3. Clean up originals, but only now that the trade references the
+ *      copies — and never an id still referenced by another setup, trade,
+ *      or review.
+ *   4. Rewrite the setup record to the new ids. A missing setup row is
+ *      reported via setupWarning rather than silently ignored.
  */
 async function attachShotsToTrade(user, setup, tradeId) {
   const setupId = String(setup?.id || analysis.id || '');
   const ids = stagedShotIds(setupId).length > 0 ? stagedShotIds(setupId) : (Array.isArray(setup?.screenshotIds) ? setup.screenshotIds.map(String) : []);
   if (ids.length === 0) return { success: true, ids: [] };
   const next = [];
+  const copied = [];
   for (const id of ids) {
     const got = await getScreenshot(id);
     if (!got.success || !got.blob) {
       // The blob is gone (device cleared); drop the dangling reference.
       removeMeta(user, id);
+      continue;
+    }
+    if (String(got.meta?.tradeId || '') === String(tradeId)) {
+      next.push(String(id));
       continue;
     }
     const saved = await saveScreenshot(got.blob, {
@@ -1085,26 +1102,76 @@ async function attachShotsToTrade(user, setup, tradeId) {
       filename: got.meta?.filename,
     });
     if (!saved.success) {
-      next.push(id);
+      next.push(String(id));
       continue;
     }
     const mirrored = addMeta(user, saved.meta);
     if (!mirrored.success) {
       await deleteScreenshot(saved.id);
-      next.push(id);
+      next.push(String(id));
       continue;
     }
-    await deleteScreenshot(id);
-    removeMeta(user, id);
+    copied.push({ oldId: String(id), newId: String(saved.id) });
     next.push(String(saved.id));
   }
   const up = updateCanonicalTrade(user, tradeId, { screenshotIds: next });
-  if (!up.success) return { success: false, error: up.error, ids: next };
+  if (!up.success) {
+    for (const { newId } of copied) {
+      await deleteScreenshot(newId);
+      removeMeta(user, newId);
+    }
+    return { success: false, error: up.error, ids: ids.map(String) };
+  }
+  for (const { oldId } of copied) {
+    if (isShotReferencedElsewhere(user, oldId, tradeId, setupId)) continue;
+    await deleteScreenshot(oldId);
+    removeMeta(user, oldId);
+  }
+  let setupWarning = '';
   if (setupId) {
     pendingShotIds[setupId] = next;
-    updateSetup(user, setupId, { screenshotIds: next });
+    const updated = updateSetup(user, setupId, { screenshotIds: next });
+    if (!updated) {
+      setupWarning = 'Trade is linked, but the setup record is gone so its screenshot list was not updated.';
+    }
   }
-  return { success: true, ids: next };
+  return { success: true, ids: next, ...(setupWarning ? { setupWarning } : {}) };
+}
+
+/**
+ * True when a screenshot id is still referenced by any record other than the
+ * given trade and setup — i.e. deleting it would corrupt another gallery.
+ * Any read failure is treated as "referenced": evidence is never deleted on
+ * the basis of a store that could not be read.
+ */
+function isShotReferencedElsewhere(user, id, tradeId, setupId) {
+  const key = String(id);
+  const lists = (v) => (Array.isArray(v) ? v : []).map(String);
+  try {
+    for (const t of getExecutedTrades(user) || []) {
+      if (!t || String(t.id) === String(tradeId)) continue;
+      if (lists(t.screenshotIds).includes(key)) return true;
+    }
+  } catch {
+    return true;
+  }
+  try {
+    for (const s of getSetups(user) || []) {
+      if (!s || String(s.id) === String(setupId)) continue;
+      if (lists(s.screenshotIds).includes(key)) return true;
+    }
+  } catch {
+    return true;
+  }
+  try {
+    for (const r of getReviews(user) || []) {
+      if (!r) continue;
+      if (lists(r.screenshotIds).includes(key)) return true;
+    }
+  } catch {
+    return true;
+  }
+  return false;
 }
 
 export function renderTradeNew() {
@@ -1602,6 +1669,7 @@ function openEnterTradeModal(user) {
       }
       const attached = await attachShotsToTrade(user, saved, res.trade.id);
       if (!attached.success) showToast(attached.error || 'Screenshots could not be attached', 'error');
+      else if (attached.setupWarning) showToast(attached.setupWarning, 'error');
       showToast('✓ Trade executed');
       navigate(`/trade/${res.trade.id}`);
     },

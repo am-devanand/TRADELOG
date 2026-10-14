@@ -48,6 +48,7 @@ function extractConst(name) {
 
 const FN = [
   'hasImageSignature',
+  'isShotReferencedElsewhere',
   'stagedShotIds',
   'paintSetupShots',
   'handleSetupShotFiles',
@@ -65,6 +66,10 @@ function makeShots({
   metaResult = { success: true },
   existingMeta = [],
   getResult = null,
+  tradeResult = { success: true },
+  setupResult = null,
+  refs = null,
+  refsThrow = false,
 } = {}) {
   const calls = { saves: [], deletes: [], metas: [], removed: [], trades: [], setups: [], toasts: [], rendered: [] };
   let nextId = 0;
@@ -90,8 +95,18 @@ function makeShots({
   const addMeta = (user, meta) => { calls.metas.push(meta); return typeof metaResult === 'function' ? metaResult(meta) : metaResult; };
   const removeMeta = (user, id) => { calls.removed.push(String(id)); return { success: true, id }; };
   const listMeta = (user, filter) => (existingMeta.filter((m) => !filter?.ids || filter.ids.includes(m.id)));
-  const updateCanonicalTrade = (user, tradeId, updates) => { calls.trades.push({ tradeId, updates }); return { success: true }; };
-  const updateSetup = (user, id, updates) => { calls.setups.push({ id, updates }); return {}; };
+  const updateCanonicalTrade = (user, tradeId, updates) => {
+    calls.trades.push({ tradeId, updates });
+    return typeof tradeResult === 'function' ? tradeResult() : tradeResult;
+  };
+  const refStores = refs || { trades: [], setups: [], reviews: [] };
+  const getExecutedTrades = () => { if (refsThrow) throw new Error('store unreadable'); return refStores.trades; };
+  const getSetups = () => { if (refsThrow) throw new Error('store unreadable'); return refStores.setups; };
+  const getReviews = () => { if (refsThrow) throw new Error('store unreadable'); return refStores.reviews; };
+  const updateSetup = (user, id, updates) => {
+    calls.setups.push({ id, updates });
+    return typeof setupResult === 'function' ? setupResult() : (setupResult === 'MISSING' ? null : (setupResult === null ? {} : setupResult));
+  };
   const showToast = (msg, kind) => { calls.toasts.push({ msg, kind }); };
   const renderScreenshotGallery = async (box, meta, handlers) => {
     calls.rendered.push({ box, meta, handlers });
@@ -111,7 +126,7 @@ function makeShots({
   const factory = new Function(
     'saveScreenshot', 'deleteScreenshot', 'getScreenshot', 'addMeta', 'removeMeta', 'listMeta',
     'updateCanonicalTrade', 'updateSetup', 'showToast', 'renderScreenshotGallery', 'document',
-    'generateId',
+    'generateId', 'getExecutedTrades', 'getSetups', 'getReviews',
     `const IMAGE_SIGNATURES = ${extractConst('IMAGE_SIGNATURES')};
 const pendingShotIds = {};
 let analysis = null;
@@ -125,6 +140,7 @@ return {
   getStaged: (setupId) => stagedShotIds(setupId),
   handleSetupShotFiles: (files) => handleSetupShotFiles('u', files),
   paintSetupShots: () => paintSetupShots('u'),
+  isRefElsewhere: (id, tradeId, setupId) => isShotReferencedElsewhere('u', id, tradeId, setupId),
   attachShotsToTrade: (setup, tradeId) => attachShotsToTrade('u', setup, tradeId),
   bindSetupShots: () => bindSetupShots('u'),
   buildSetupRecord: (status) => buildSetupRecord(status),
@@ -135,7 +151,7 @@ return {
   const api = factory(
     saveScreenshot, deleteScreenshot, getScreenshot, addMeta, removeMeta, listMeta,
     updateCanonicalTrade, updateSetup, showToast, renderScreenshotGallery, doc,
-    () => 'analysis-id',
+    () => 'analysis-id', getExecutedTrades, getSetups, getReviews,
   );
   return { api, calls };
 }
@@ -349,6 +365,133 @@ test('a failed re-save keeps the original id so evidence is never lost', async (
   equal(res.success, true, 'the trade is still linked');
   deepEqual(res.ids, ['old_1'], 'the surviving id is the original one');
   equal(calls.deletes.includes('old_1'), false, 'the surviving blob is not deleted');
+});
+
+test('trade-update failure keeps every original and rolls back every copy', async () => {
+  const { api, calls } = makeShots({ tradeResult: { success: false, error: 'Trade not found' } });
+  api.setAnalysis({ id: 'setup_1' });
+  api.setStaged('setup_1', ['old_1', 'old_2']);
+  const res = await api.attachShotsToTrade({ id: 'setup_1', screenshotIds: ['old_1', 'old_2'] }, 'trade_9');
+  equal(res.success, false, 'failure is reported truthfully');
+  equal(res.error, 'Trade not found', 'the engine error surfaces');
+  deepEqual(res.ids.sort(), ['old_1', 'old_2'], 'the returned ids are the surviving originals');
+  const deletedOld = calls.deletes.filter((d) => d === 'old_1' || d === 'old_2');
+  deepEqual(deletedOld, [], 'no original blob is deleted');
+  const removedOld = calls.removed.filter((d) => d === 'old_1' || d === 'old_2');
+  deepEqual(removedOld, [], 'no original metadata ref is removed');
+  equal(calls.deletes.length, 2, 'exactly the two unreferenced copies are rolled back');
+  deepEqual(api.getStaged('setup_1').sort(), ['old_1', 'old_2'], 'staged evidence is fully intact for retry');
+  equal(calls.setups.length, 0, 'the setup record is never rewritten on a failed link');
+});
+
+test('a failed copy keeps its original id without disturbing the others', async () => {
+  let n = 0;
+  const { api, calls } = makeShots({
+    saveResult: () => {
+      n += 1;
+      if (n === 2) return { success: false, error: 'QuotaExceededError' };
+      return { success: true, id: `shot_${n}`, meta: { id: `shot_${n}`, tradeId: '', setupId: 'setup_1', reviewId: '', type: 'ENTRY', filename: 'a.png', mimeType: 'image/png', size: 1, createdAt: '2026-01-01T00:00:00.000Z' } };
+    },
+  });
+  api.setAnalysis({ id: 'setup_1' });
+  api.setStaged('setup_1', ['old_1', 'old_2']);
+  const res = await api.attachShotsToTrade({ id: 'setup_1', screenshotIds: ['old_1', 'old_2'] }, 'trade_9');
+  equal(res.success, true, 'one good copy is enough to link');
+  deepEqual(res.ids, ['shot_1', 'old_2'], 'failed copy keeps its original id in place');
+  equal(calls.deletes.includes('old_2'), false, 'the surviving original is not deleted');
+  ok(calls.deletes.includes('old_1'), 'the successfully re-keyed original is cleaned up');
+});
+
+test('setup-metadata failure is explicit: trade linked, setup warned, nothing silently ignored', async () => {
+  const { api, calls } = makeShots({ setupResult: 'MISSING' });
+  // updateSetup stub reports the setup row missing.
+  api.setAnalysis({ id: 'setup_gone' });
+  api.setStaged('setup_gone', ['old_1']);
+  const res = await api.attachShotsToTrade({ id: 'setup_gone', screenshotIds: ['old_1'] }, 'trade_9');
+  equal(res.success, true, 'the trade link itself succeeded');
+  ok(typeof res.setupWarning === 'string' && res.setupWarning.length > 0, 'the setup failure is reported, not swallowed');
+  const up = calls.trades.at(-1);
+  deepEqual(up.updates.screenshotIds, ['shot_1'], 'the trade still points at the valid copy');
+  ok(calls.deletes.includes('old_1'), 'cleanup still ran because the trade link succeeded');
+});
+
+test('retry after a failed link copies nothing twice and deletes nothing original', async () => {
+  let linkFails = true;
+  const { api, calls } = makeShots({
+    tradeResult: () => (linkFails ? { success: false, error: 'boom' } : { success: true }),
+  });
+  api.setAnalysis({ id: 'setup_1' });
+  api.setStaged('setup_1', ['old_1']);
+  const first = await api.attachShotsToTrade({ id: 'setup_1', screenshotIds: ['old_1'] }, 'trade_9');
+  equal(first.success, false, 'first attempt fails at the link');
+  const savesAfterFirst = calls.saves.length;
+  const deletesAfterFirst = calls.deletes.length;
+  linkFails = false;
+  const second = await api.attachShotsToTrade({ id: 'setup_1', screenshotIds: ['old_1'] }, 'trade_9');
+  equal(second.success, true, 'retry succeeds');
+  equal(calls.saves.length, savesAfterFirst + 1, 'exactly one new copy on retry, no duplicates');
+  equal(calls.deletes.filter((d) => d === 'old_1').length, deletesAfterFirst === 0 ? 1 : deletesAfterFirst, 'the original is deleted exactly once, only after a successful link');
+  deepEqual(api.getStaged('setup_1'), second.ids, 'staged state converges on the linked ids');
+});
+
+test('retry after success is a no-op: already-linked ids are never recopied', async () => {
+  const { api, calls } = makeShots({
+    getResult: (id) => ({
+      success: true, id, blob: new Blob(['x'], { type: 'image/png' }),
+      meta: { id, tradeId: 'trade_9', type: 'ENTRY', filename: 'a.png' },
+    }),
+  });
+  api.setAnalysis({ id: 'setup_1' });
+  api.setStaged('setup_1', ['shot_1']);
+  const res = await api.attachShotsToTrade({ id: 'setup_1', screenshotIds: ['shot_1'] }, 'trade_9');
+  equal(res.success, true, 'idempotent retry succeeds');
+  deepEqual(res.ids, ['shot_1'], 'same ids back');
+  equal(calls.saves.length, 0, 'no blob is copied again');
+  equal(calls.deletes.length, 0, 'nothing is deleted');
+});
+
+test('an original still referenced by another setup is preserved, not deleted', async () => {
+  const { api, calls } = makeShots({
+    refs: {
+      trades: [],
+      setups: [{ id: 'setup_other', screenshotIds: ['old_1'] }],
+      reviews: [],
+    },
+  });
+  api.setAnalysis({ id: 'setup_1' });
+  api.setStaged('setup_1', ['old_1']);
+  const res = await api.attachShotsToTrade({ id: 'setup_1', screenshotIds: ['old_1'] }, 'trade_9');
+  equal(res.success, true, 'the trade still links to its copy');
+  deepEqual(res.ids, ['shot_1'], 'trade points at the copy');
+  equal(calls.deletes.includes('old_1'), false, 'the shared original survives');
+  equal(calls.removed.includes('old_1'), false, 'and so does its metadata ref');
+});
+
+test('reference checks exclude the current trade and setup but include reviews', async () => {
+  const { api } = makeShots({
+    refs: {
+      trades: [{ id: 'trade_9', screenshotIds: ['old_1'] }],
+      setups: [{ id: 'setup_1', screenshotIds: ['old_1'] }],
+      reviews: [],
+    },
+  });
+  ok(!api.isRefElsewhere('old_1', 'trade_9', 'setup_1'), 'the current trade and setup do not count as elsewhere');
+  ok(api.isRefElsewhere('old_1', 'trade_OTHER', 'setup_OTHER'), 'the same id seen from another record counts');
+  ok(!api.isRefElsewhere('fresh_id', 'trade_9', 'setup_1'), 'an unreferenced id is safe to clean');
+  const withReview = makeShots({
+    refs: { trades: [], setups: [], reviews: [{ id: 'rev_1', screenshotIds: ['old_1'] }] },
+  });
+  ok(withReview.api.isRefElsewhere('old_1', 'trade_9', 'setup_1'), 'a review holding the id protects it even during this trade’s cleanup');
+});
+
+test('an unreadable store blocks deletion rather than risking shared evidence', async () => {
+  const { api, calls } = makeShots({ refsThrow: true });
+  api.setAnalysis({ id: 'setup_1' });
+  api.setStaged('setup_1', ['old_1']);
+  ok(api.isRefElsewhere('old_1', 'trade_9', 'setup_1'), 'a store that cannot be read counts as referenced');
+  const res = await api.attachShotsToTrade({ id: 'setup_1', screenshotIds: ['old_1'] }, 'trade_9');
+  equal(res.success, true, 'the link itself still succeeds');
+  equal(calls.deletes.includes('old_1'), false, 'but the original is preserved when ownership cannot be verified');
 });
 
 // ---- 5. Cancel / failure preservation ----
