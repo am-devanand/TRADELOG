@@ -14,6 +14,7 @@ import { renderTrade, renderTradeNew } from './js/pages/trade.js';
 import { renderTradeDetail } from './js/pages/tradeDetail.js';
 import { renderTradeReview } from './js/pages/tradeReview.js';
 import { renderProp } from './js/pages/prop.js';
+import { renderCalendar } from './js/pages/calendar.js';
 import { renderStrategyAnalytics, renderStrategyDetail } from './js/pages/strategyAnalytics.js';
 import { renderProcessAnalytics } from './js/pages/processAnalytics.js';
 import { renderImprovements } from './js/pages/improvements.js';
@@ -23,7 +24,6 @@ import { renderStrategies } from './js/pages/strategies.js';
 import { renderReplay, renderReplayDetail } from './js/pages/replay.js';
 import { renderSettings } from './js/pages/settings.js';
 import { renderIntegrityPage } from './js/pages/integrity.js';
-import { showToast } from './js/utils/helpers.js';
 import { getExecutedTrade } from './js/utils/executedTrades.js';
 
 // Initialize theme
@@ -96,16 +96,8 @@ registerRoute('/replay', authGuard(renderReplay));
 // differ ('replay' vs 'trade') and the router matches per-pattern
 // (length + literal check), so no cross-capture.
 registerRoute('/replay/:runId', authGuard(renderReplayDetail));
-// /calendar — calendar agent owns ./js/pages/calendar.js; lazy dynamic import
-// with @vite-ignore keeps the build green when the file lands later.
-registerRoute('/calendar', authGuard((params) => {
-  import(/* @vite-ignore */ './js/pages/calendar.js')
-    .then((m) => {
-      if (m && typeof m.renderCalendar === 'function') m.renderCalendar(params);
-      else showToast('Calendar view is not available yet', 'error');
-    })
-    .catch(() => showToast('Calendar view is not available yet', 'error'));
-}));
+// /calendar — statically imported now that ./js/pages/calendar.js exists.
+registerRoute('/calendar', authGuard(renderCalendar));
 
 // Start
 if (!window.location.hash) window.location.hash = '/';

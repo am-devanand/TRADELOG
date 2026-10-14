@@ -21,6 +21,7 @@ export function renderNavbar() {
         <a class="btn btn-ghost btn-sm" href="#/analytics" id="nav-analytics" title="Analytics">📊 Analytics</a>
         <a class="btn btn-ghost btn-sm" href="#/strategies" id="nav-strategies" title="Strategies">♟ Strategies</a>
         <a class="btn btn-ghost btn-sm" href="#/replay" id="nav-replay" title="Replay (simulation)">↺ Replay</a>
+        <a class="btn btn-ghost btn-sm" href="#/calendar" id="nav-calendar" title="Trading Calendar">📅 Calendar</a>
         <a class="btn btn-ghost btn-sm" href="#/settings" id="nav-settings" title="Settings">⚙ Settings</a>
         <label class="toggle" title="Toggle theme">
           <input type="checkbox" id="theme-toggle" ${theme === 'light' ? 'checked' : ''}>
@@ -72,6 +73,9 @@ export function bindNavbar() {
   });
   document.getElementById('nav-prop')?.addEventListener('click', () => {
     navigate('/prop');
+  });
+  document.getElementById('nav-calendar')?.addEventListener('click', () => {
+    navigate('/calendar');
   });
   document.getElementById('nav-analytics')?.addEventListener('click', () => {
     navigate('/analytics');

@@ -44,7 +44,7 @@ function parseToDate(value) {
  * openedAt fallback (covers OPEN / PARTIALLY_CLOSED trades).
  * Returns '' when neither parses.
  */
-function dayKeyForTrade(trade) {
+export function dayKeyForTrade(trade) {
   if (!trade || typeof trade !== 'object') return '';
   const status = String(trade.status || '').trim().toUpperCase();
   if (status === 'CLOSED') {
@@ -57,14 +57,13 @@ function dayKeyForTrade(trade) {
 
 function reviewTotal(review) {
   if (!review || typeof review !== 'object') return NaN;
-  const nested = review.processScore && typeof review.processScore === 'object'
-    ? review.processScore.total
-    : NaN;
-  const flat = review.total;
-  const n = Number(nested);
-  if (Number.isFinite(n)) return n;
-  const f = Number(flat);
-  return Number.isFinite(f) ? f : NaN;
+  const src = review.processScore && typeof review.processScore === 'object' ? review.processScore : null;
+  // Non-positive counts as absent: normalizeReview back-fills processScore from
+  // factory defaults, so 0 there would mask the review's own `total`.
+  const nested = Number(src && src.total);
+  if (Number.isFinite(nested) && nested > 0) return nested;
+  const flat = Number(review.total);
+  return Number.isFinite(flat) && flat > 0 ? flat : NaN;
 }
 
 /**
@@ -77,7 +76,9 @@ function reviewTotal(review) {
 export function getDailyAggregates(user, accountId, year, month) {
   const y = Number(year);
   const m = Number(month);
-  if (!Number.isInteger(y) || !Number.isInteger(m) || m < 0 || m > 11) return [];
+  // `Number(null)` and `Number('')` are 0, which would silently render a
+  // phantom year-0 month; bound the year so only real years pass.
+  if (!Number.isInteger(y) || !Number.isInteger(m) || y < 1 || y > 9999 || m < 0 || m > 11) return [];
   const daysInMonth = new Date(y, m + 1, 0).getDate();
   const prefix = `${y}-${pad2(m + 1)}`;
 
@@ -473,4 +474,4 @@ export function renderCalendar() {
   paint();
 }
 
-export default { renderCalendar, getDailyAggregates, toLocalISO };
+export default { renderCalendar, getDailyAggregates, dayKeyForTrade, toLocalISO };
