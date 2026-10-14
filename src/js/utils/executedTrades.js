@@ -650,7 +650,11 @@ function executeLegacy(user, setup, executionData) {
       accountId: market.accountId ?? setup.accountId ?? '',
       pair: market.pair ?? setup.pair ?? '',
       direction,
-      strategyId: market.strategy ?? setup.strategy ?? setup.strategyId ?? '',
+      // Prefer a real Strategy Builder id. The free-text strings are only a
+      // fallback for setups predating linked strategies, which never had an
+      // id — previously market.strategy won and a display name was stored in
+      // the strategyId slot, fragmenting per-strategy analytics.
+      strategyId: market.strategyId ?? setup.strategyId ?? market.strategy ?? setup.strategy ?? '',
       session: market.session ?? setup.session ?? '',
       timeframe: market.timeframe ?? setup.timeframe ?? '',
       setupType: market.setupType ?? setup.setupType ?? '',

@@ -28,6 +28,7 @@ import {
 import { renderNavbar, bindNavbar } from '../components/navbar.js';
 import { openExecutionModal } from '../components/executionModal.js';
 import { executeSetup } from '../utils/executedTrades.js';
+import { getStrategies, getStrategy } from '../utils/strategyStore.js';
 import { getReviewByTradeId } from '../utils/tradeReviews.js';
 import { appendAudit } from '../utils/auditLog.js';
 
@@ -81,6 +82,29 @@ const FALLBACK_PAIRS = [
 const SESSIONS = ['London', 'New York', 'Asia', 'Overlap London-NewYork', 'Custom'];
 const TIMEFRAMES = ['1m', '5m', '15m', '30m', '1h', '4h', 'Daily', 'Custom'];
 const STRATEGY_SUGGESTIONS = ['Breakout', 'Reversal', 'Scalp', 'Trend Following', 'Range', 'News', 'Supply & Demand', 'Smart Money'];
+
+// Strategy Builder strategies are the linked source of truth: they carry a
+// stable id, so analytics group by id instead of a typo-prone string. With no
+// strategies built yet there is nothing to link to, so the free-text field is
+// kept rather than blocking trade entry.
+function strategyFieldHtml(user, selectedId, selectedName) {
+  const list = getStrategies(user);
+  if (!list.length) {
+    return `<input list="ta-strategy-list" id="ta-strategy" value="${escapeHtml(selectedName)}" placeholder="No strategy selected — free text (build a strategy to link it)">
+            <datalist id="ta-strategy-list">${STRATEGY_SUGGESTIONS.map((s) => `<option value="${escapeHtml(s)}">`).join('')}</datalist>`;
+  }
+  const options = list
+    .map((s) => {
+      const label = `${s.name || 'Unnamed'} (v${s.version ?? 1} · ${s.status || 'DRAFT'})`;
+      const selected = String(s.id) === String(selectedId) ? ' selected' : '';
+      return `<option value="${escapeHtml(String(s.id))}" data-name="${escapeHtml(String(s.name || ''))}"${selected}>${escapeHtml(label)}</option>`;
+    })
+    .join('');
+  return `<select id="ta-strategy">
+              <option value=""${selectedId ? '' : ' selected'}>— No strategy —</option>
+              ${options}
+            </select>`;
+}
 const MANUAL_TYPES = new Set(['CHECKBOX', 'BOOLEAN']);
 const REOPEN_KEY = 'tradelog_reopen_setup';
 const STATUSES = ['DRAFT', 'WAITING', 'READY', 'NO_TRADE'];
@@ -136,6 +160,7 @@ function blankAnalysis() {
     pair: '',
     direction: 'LONG',
     strategy: '',
+    strategyId: '',
     session: '',
     timeframe: '',
     setupType: '',
@@ -976,6 +1001,7 @@ export function renderTradeNew() {
         pair: saved.market?.pair || saved.pair || '',
         direction: saved.market?.direction || saved.direction || 'LONG',
         strategy: saved.market?.strategy || saved.strategy || '',
+        strategyId: saved.market?.strategyId ?? saved.strategyId ?? '',
         session: saved.market?.session || saved.session || '',
         timeframe: saved.market?.timeframe || saved.timeframe || '',
         setupType: saved.market?.setupType || saved.setupType || '',
@@ -988,6 +1014,12 @@ export function renderTradeNew() {
         manualChecks: { ...(saved.checklist || {}) },
         status: saved.status || 'DRAFT',
       };
+      // A linked strategy whose name was never persisted (e.g. the strategy
+      // was deleted after the setup was saved) still needs a display string.
+      if (analysis.strategyId && !analysis.strategy) {
+        const linked = getStrategy(user, analysis.strategyId);
+        analysis.strategy = linked ? String(linked.name || '') : 'Unknown strategy';
+      }
     }
     try { sessionStorage.removeItem(REOPEN_KEY); } catch { /* noop */ }
   }
@@ -1038,8 +1070,7 @@ export function renderTradeNew() {
             <div class="form-row">
               <div class="form-group">
                 <label class="form-label" for="ta-strategy">Strategy</label>
-                <input list="ta-strategy-list" id="ta-strategy" value="${escapeHtml(analysis.strategy)}" placeholder="No strategy selected — free text (Phase 7: linked strategies)">
-                <datalist id="ta-strategy-list">${STRATEGY_SUGGESTIONS.map((s) => `<option value="${escapeHtml(s)}">`).join('')}</datalist>
+                ${strategyFieldHtml(user, analysis.strategyId, analysis.strategy)}
               </div>
               <div class="form-group">
                 <label class="form-label" for="ta-setupType">Setup type</label>
@@ -1140,7 +1171,19 @@ function readFormIntoState() {
   const v = (id) => document.getElementById(id)?.value ?? '';
   analysis.accountId = v('ta-account');
   analysis.pair = v('ta-pair');
-  analysis.strategy = v('ta-strategy').trim();
+  // The control is a <select> when strategies exist and a free-text input
+  // otherwise. The selected option carries its name in data-name, so the
+  // display string stays correct after a rename without re-reading the store.
+  const strategyEl = document.getElementById('ta-strategy');
+  if (strategyEl?.tagName === 'SELECT') {
+    analysis.strategyId = strategyEl.value || '';
+    analysis.strategy = analysis.strategyId
+      ? strategyEl.selectedOptions?.[0]?.dataset?.name || ''
+      : '';
+  } else {
+    analysis.strategyId = '';
+    analysis.strategy = (strategyEl?.value ?? '').trim();
+  }
   analysis.session = v('ta-session');
   analysis.timeframe = v('ta-timeframe');
   analysis.setupType = v('ta-setupType').trim();
@@ -1336,6 +1379,7 @@ function buildSetupRecord(status) {
   return {
     id: analysis.id,
     status,
+    strategyId: analysis.strategyId,
     score: r.decision.score,
     state: r.decision.state,
     checklist: { ...analysis.manualChecks },
@@ -1347,6 +1391,7 @@ function buildSetupRecord(status) {
       pair: analysis.pair,
       direction: analysis.direction,
       strategy: analysis.strategy,
+      strategyId: analysis.strategyId,
       session: analysis.session,
       timeframe: analysis.timeframe,
       setupType: analysis.setupType,
